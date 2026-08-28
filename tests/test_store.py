@@ -51,9 +51,32 @@ def _sqlite_url():
     return "sqlite:///" + path, path
 
 
+def _migrate(url):
+    """用 Alembic 在给定连接串上建全部表（含审批/审计），替代原先 store 内的 create_all。"""
+    import src.db as db
+
+    old = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = url
+    db._engines.clear()
+    db._sessions.clear()
+    try:
+        db.migrate_db()
+    finally:
+        if old is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = old
+        db._engines.clear()
+        db._sessions.clear()
+
+
 def test_postgres_store_sqlite():
-    """用 sqlite 验证 PostgresApprovalStore 的 SQLAlchemy Core 逻辑可移植。"""
+    """用 sqlite 验证 PostgresApprovalStore 的 SQLAlchemy Core 逻辑可移植。
+
+    schema 现由 Alembic 管理（不再由 store 内 create_all），故先跑迁移建表。
+    """
     url, path = _sqlite_url()
+    _migrate(url)
     try:
         s = PostgresApprovalStore(url)
         payload = {"action": "emergency_handoff", "intent": "emergency", "tools": ["call_120"]}
@@ -79,6 +102,7 @@ def test_postgres_store_sqlite():
     not os.getenv("DATABASE_URL"), reason="需设置 DATABASE_URL（CI 中由 PostgreSQL 服务容器提供）"
 )
 def test_postgres_store_real():
+    _migrate(os.getenv("DATABASE_URL"))
     s = PostgresApprovalStore(os.getenv("DATABASE_URL"))
     payload = {"action": "lock_and_settle", "intent": "booking", "tools": ["lock_appointment"]}
     aid = s.create("thread-real", payload)

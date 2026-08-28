@@ -101,17 +101,19 @@ class ApprovalStore:
 class PostgresApprovalStore:
     """生产级审批存储：基于 SQLAlchemy ORM + 真实数据库（Postgres/SQLite 同构）。
 
-    表结构与 db.py 的 Approval / AuditLog 模型一致；sqlalchemy 为懒导入，
+    表结构与 db.py 的 Approval / AuditLog / PendingCall 模型一致；sqlalchemy 为懒导入，
     因此内存/文件模式下无需安装该依赖，脚手架仍可开箱即跑。
+
+    **schema 由 Alembic 统一管理**：`src/db.py` 的 ``init_db()`` 执行 ``alembic upgrade head``
+    负责建全部表（含审批/审计/待审批缓存），本类不再 ``create_all``，避免与迁移双源、保证可演进。
+    使用前提：调用方必须先跑迁移（gateway lifespan / pytest conftest / eval 入口均已保证）。
     """
 
     def __init__(self, url: str):
         from sqlalchemy import create_engine
 
-        from .db import Base
-
+        # 不再 Base.metadata.create_all：schema 完全交给 Alembic（见上）。
         self.engine = create_engine(url, pool_pre_ping=True, future=True)
-        Base.metadata.create_all(self.engine)
 
     def create(self, thread_id, payload):
         from sqlalchemy.orm import sessionmaker
