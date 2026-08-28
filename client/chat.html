@@ -4,14 +4,42 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>患者端 · 医疗预约诊疗</title>
-  <style>body{font-family:-apple-system,"PingFang SC",system-ui,sans-serif;max-width:720px;margin:24px auto;padding:0 16px}#out{white-space:pre-wrap;background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:12px;min-height:120px}input{width:60%;padding:8px}button{padding:8px 14px}</style>
+  <style>body{font-family:-apple-system,"PingFang SC",system-ui,sans-serif;max-width:720px;margin:24px auto;padding:0 16px}#out{white-space:pre-wrap;background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:12px;min-height:120px}input{padding:8px}button{padding:8px 14px;cursor:pointer}.card{border:1px solid #e5e7eb;border-radius:10px;padding:12px;margin-bottom:12px}.hidden{display:none}</style>
 </head>
 <body>
-  <h3>患者端 · 医疗预约诊疗（SSE 流式）</h3>
-  <div><input id="msg" placeholder="例如：我头痛挂什么科 / 我要挂号预约神经内科" /><button onclick="send()">发送</button></div>
-  <pre id="out"></pre>
+  <h3>患者端 · 医疗预约诊疗（SSE 流式 + JWT）</h3>
+  <div id="login" class="card">
+    <div>演示账号（已预填）：<b>alice / alice123</b></div>
+    <div style="margin-top:8px">
+      <input id="u" value="alice" />
+      <input id="p" type="password" value="alice123" />
+      <button onclick="login()">登录</button>
+    </div>
+    <div id="loginmsg" style="color:#b91c1c;margin-top:6px"></div>
+  </div>
+  <div id="app" class="hidden">
+    <div>
+      <input id="msg" placeholder="例如：我要挂神经内科今天的号，请锁定号源并办理医保结算" style="width:70%" />
+      <button onclick="send()">发送</button>
+    </div>
+    <pre id="out"></pre>
+  </div>
   <script>
-    const TOKEN = "Bearer patient:alice";
+    let TOKEN = "";
+    async function login() {
+      const u = document.getElementById("u").value;
+      const p = document.getElementById("p").value;
+      const r = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: u, password: p, role: "patient" }),
+      });
+      const d = await r.json();
+      if (!r.ok) { document.getElementById("loginmsg").textContent = d.detail || "登录失败"; return; }
+      TOKEN = "Bearer " + d.access_token;
+      document.getElementById("login").classList.add("hidden");
+      document.getElementById("app").classList.remove("hidden");
+    }
     const tid = "thr-alice-demo";
     async function send() {
       const msg = document.getElementById("msg").value;
@@ -34,7 +62,7 @@
             const p = JSON.parse(block.slice(5));
             if (p.type === "token") out.textContent += p.text;
             if (p.type === "interrupt")
-              out.textContent += "\n[需医生审核 approval_id=" + p.approval_id + "，请等待医护端处理]\n";
+              out.textContent += "\n[需医生审核 approval_id=" + p.approval_id + "，请到医护端审核台处理]\n";
           }
         });
         buf = "";

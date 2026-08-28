@@ -166,6 +166,7 @@ class PostgresApprovalStore:
             s.commit()
             return {
                 "id": ap.id,
+                "approval_id": ap.id,
                 "thread_id": ap.thread_id,
                 "payload": json.loads(ap.payload),
                 "status": ap.status,
@@ -184,6 +185,7 @@ class PostgresApprovalStore:
             return [
                 {
                     "id": r.id,
+                    "approval_id": r.id,
                     "thread_id": r.thread_id,
                     "payload": json.loads(r.payload),
                     "status": r.status,
@@ -226,6 +228,7 @@ class PostgresApprovalStore:
                 return None
             return {
                 "id": ap.id,
+                "approval_id": ap.id,
                 "thread_id": ap.thread_id,
                 "payload": json.loads(ap.payload),
                 "status": ap.status,

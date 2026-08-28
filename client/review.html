@@ -4,15 +4,40 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>医护端 · 审核台</title>
-  <style>body{font-family:-apple-system,"PingFang SC",system-ui,sans-serif;max-width:760px;margin:24px auto;padding:0 16px}li{margin:8px 0;padding:8px;border:1px solid #fecaca;border-radius:8px;background:#fef2f2}button{margin-left:6px;padding:4px 10px}</style>
+  <style>body{font-family:-apple-system,"PingFang SC",system-ui,sans-serif;max-width:760px;margin:24px auto;padding:0 16px}li{margin:8px 0;padding:8px;border:1px solid #fecaca;border-radius:8px;background:#fef2f2}button{margin-left:6px;padding:4px 10px;cursor:pointer}.card{border:1px solid #e5e7eb;border-radius:10px;padding:12px;margin-bottom:12px}.hidden{display:none}</style>
 </head>
 <body>
   <h3>医护端 · 人工审核台</h3>
-  <button onclick="load()">加载待审</button>
-  <button onclick="load()">刷新</button>
-  <ul id="list"></ul>
+  <div id="login" class="card">
+    <div>演示账号（已预填）：<b>drwang / dr123456</b></div>
+    <div style="margin-top:8px">
+      <input id="u" value="drwang" />
+      <input id="p" type="password" value="dr123456" />
+      <button onclick="login()">登录</button>
+    </div>
+    <div id="loginmsg" style="color:#b91c1c;margin-top:6px"></div>
+  </div>
+  <div id="app" class="hidden">
+    <button onclick="load()">加载待审</button>
+    <ul id="list"></ul>
+  </div>
   <script>
-    const TOKEN = "Bearer doctor:drwang";
+    let TOKEN = "";
+    async function login() {
+      const u = document.getElementById("u").value;
+      const p = document.getElementById("p").value;
+      const r = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: u, password: p, role: "doctor" }),
+      });
+      const d = await r.json();
+      if (!r.ok) { document.getElementById("loginmsg").textContent = d.detail || "登录失败"; return; }
+      TOKEN = "Bearer " + d.access_token;
+      document.getElementById("login").classList.add("hidden");
+      document.getElementById("app").classList.remove("hidden");
+      load();
+    }
     async function load() {
       const r = await fetch("/api/review/pending", { headers: { Authorization: TOKEN } });
       const d = await r.json();
@@ -41,7 +66,6 @@
       });
       load();
     }
-    load();
   </script>
 </body>
 </html>

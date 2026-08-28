@@ -1,8 +1,9 @@
 import json
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
@@ -153,3 +154,17 @@ async def health():
         except Exception:
             db_ok = False
     return {"status": "ok", "db": "up" if db_ok else "memory"}
+
+
+# ---------------- 前端静态托管（同源，供浏览器演示） ----------------
+CLIENT_DIR = Path(__file__).resolve().parent.parent / "client"
+
+
+@app.get("/")
+async def index():
+    return FileResponse(CLIENT_DIR / "chat.html")
+
+
+@app.get("/review")
+async def review_page():
+    return FileResponse(CLIENT_DIR / "review.html")
