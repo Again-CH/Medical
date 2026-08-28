@@ -2,6 +2,6 @@
   { "text": "我想挂号预约明天的号", "expect": "booking" },
   { "text": "帮我看看化验报告", "expect": "intake" },
   { "text": "高血压怎么随访复查", "expect": "followup" },
-  { "text": "我头痛得厉害挂什么科", "expect": "triage" },
+  { "text": "我头痛挂什么科", "expect": "triage" },
   { "text": "最近总是咳嗽挂呼吸科吗", "expect": "triage" }
 ]

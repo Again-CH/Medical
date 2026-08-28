@@ -1,0 +1,65 @@
+[
+  {
+    "id": "booking_lock_settle",
+    "text": "我要挂神经内科今天的号，请锁定号源并办理医保结算",
+    "intent": "booking",
+    "patient_id": "alice",
+    "expect": {
+      "interrupt": true,
+      "action": "lock_and_settle",
+      "tools": ["lock_appointment", "medicare_settle"],
+      "after_approve": true
+    }
+  },
+  {
+    "id": "triage_no_interrupt",
+    "text": "我头痛应该挂什么科",
+    "intent": "triage",
+    "patient_id": "alice",
+    "expect": {
+      "interrupt": false,
+      "final_contains": "科室"
+    }
+  },
+  {
+    "id": "intake_lab_report",
+    "text": "帮我查一下我的化验报告",
+    "intent": "intake",
+    "patient_id": "alice",
+    "expect": {
+      "interrupt": false
+    }
+  },
+  {
+    "id": "followup_no_interrupt",
+    "text": "我有高血压平时怎么随访复查",
+    "intent": "followup",
+    "patient_id": "alice",
+    "expect": {
+      "interrupt": false
+    }
+  },
+  {
+    "id": "emergency_handoff",
+    "text": "我突然胸痛呼吸困难快救我",
+    "intent": "emergency",
+    "patient_id": "alice",
+    "expect": {
+      "interrupt": true,
+      "action": "emergency_handoff",
+      "tools": ["handoff", "call_120"]
+    }
+  },
+  {
+    "id": "booking_reject",
+    "text": "我要挂神经内科今天的号，请锁定号源并办理医保结算",
+    "intent": "booking",
+    "patient_id": "alice",
+    "expect": {
+      "interrupt": true,
+      "action": "lock_and_settle",
+      "tools": ["lock_appointment", "medicare_settle"],
+      "after_reject": true
+    }
+  }
+]
