@@ -4,7 +4,8 @@
 - 代码只认一个连接串 ``DATABASE_URL``；不设置 → 内存 demo 模式（get_hub 返回 MemoryHub）。
 - 设置成 ``postgresql+psycopg2://...`` → 真实持久化（生产）。
 - 本地开发可用 ``sqlite:///./dev.db`` 跑通同构 SQL，无需起服务即可验证。
-- 所有模型集中在 Base 下，migrate/seed 用 create_all（生产可平滑替换为 Alembic）。
+- 所有模型集中在 Base 下，schema 版本由 Alembic 管理（``alembic/`` 目录 + ``init_db()``
+  调用 ``alembic upgrade head``）；离线/单测可走 sqlite 同构 SQL，生产走 postgres。
 """
 
 from __future__ import annotations
@@ -211,12 +212,53 @@ def get_session() -> Session:
     return _sessions[url]()
 
 
-def init_db() -> None:
-    """建表（幂等）。生产建议替换为 Alembic 迁移。"""
+def _alembic_config() -> "object":
+    """构造指向仓库内 alembic.ini 的 Alembic Config。
+
+    真正的连接串由 alembic/env.py 从环境变量 DATABASE_URL 读取，
+    因此同一份迁移既能跑 sqlite（本地/测试）也能跑 postgres（生产）。
+    """
+    from alembic.config import Config
+
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = Config(os.path.join(repo_root, "alembic.ini"))
+    return cfg
+
+
+def migrate_db() -> None:
+    """执行 Alembic 迁移到最新版本（生产级 schema 版本管理）。
+
+    取代原先的 ``Base.metadata.create_all``：现在 schema 有版本号、可回滚、可演进。
+    兼容两类库：
+    - 全新库：``alembic upgrade head`` 按迁移文件建全部表。
+    - 旧库（曾用 create_all 建表、但无 alembic_version 登记）：首次 upgrade 会因
+      “表已存在” 报错，此时自动 ``stamp head`` 标记为最新版本（schema 与初始迁移一致），
+      后续启动即变为幂等的无操作。
+    """
     eng = get_engine()
     if eng is None:
-        raise RuntimeError("DATABASE_URL 未设置，无法建表")
-    Base.metadata.create_all(eng)
+        raise RuntimeError("DATABASE_URL 未设置，无法迁移")
+
+    from alembic import command
+
+    cfg = _alembic_config()
+    try:
+        command.upgrade(cfg, "head")
+    except Exception as e:  # noqa: BLE001
+        # 旧库已用 create_all 建过表但未登记版本 → 直接 stamp head，避免重复建表报错
+        err = str(e)
+        if "already exists" in err or type(e).__name__ == "ProgrammingError":
+            try:
+                command.stamp(cfg, "head")
+                return
+            except Exception:  # noqa: BLE001
+                pass
+        raise
+
+
+def init_db() -> None:
+    """建表（幂等）：执行 Alembic 迁移到最新版本。"""
+    migrate_db()
 
 
 def drop_db() -> None:

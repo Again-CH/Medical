@@ -140,6 +140,11 @@ cp .env.example .env          # 默认 LLM_MODE=ollama + DATABASE_URL=本地 PG
 # 或分步：make migrate && make seed && make run
 ```
 
+> **Schema 版本管理（Alembic）**：`make migrate` 与 Docker 启动都会自动执行 `alembic upgrade head`，
+> 按 `alembic/versions/` 下的带版本迁移演进 schema（可回滚、可演进）。后续要改表结构，只需修改
+> `src/db.py` 中的模型，再运行 `DATABASE_URL=<库> .venv/bin/alembic revision --autogenerate -m "<描述>"`
+> 生成新迁移即可，无需手写 SQL。旧库（曾用 `create_all` 建表）首次启动会自动 `stamp head`，不会重复建表。
+
 **② Docker 部署（含 Postgres + 网关）**
 
 ```bash

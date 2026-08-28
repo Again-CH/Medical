@@ -10,6 +10,8 @@ httpx>=0.27
 # 生产级持久化（可选：仅当设置 DATABASE_URL 时才需要，脚手架默认内存/JSON 仍可开箱即跑）
 sqlalchemy>=2.0
 psycopg2-binary>=2.9
+# 数据库迁移（Alembic）：替代 create_all，提供带版本、可回滚、可演进的 schema 管理
+alembic>=1.13
 # PostgresSaver 异步 checkpointer：实现会话状态 + HITL 待审批缓存跨重启持久化（LLM_MODE=openai/真实库）
 psycopg[binary]>=3.3
 langgraph-checkpoint-postgres>=3.1

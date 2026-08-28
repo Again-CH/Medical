@@ -1,6 +1,7 @@
-"""数据库迁移入口：创建全部表（幂等）。
+"""数据库迁移入口：执行 Alembic 迁移到最新版本（幂等）。
 
-生产环境建议替换为 Alembic 做带版本的迁移；本地/CI 用 create_all 已足够跑通。
+schema 版本由 alembic/ 管理；init_db() 内部即调用 alembic upgrade head。
+旧库（曾用 create_all 建表、无 alembic_version）首次运行会自动 stamp head，不会重复建表。
 """
 
 import os
