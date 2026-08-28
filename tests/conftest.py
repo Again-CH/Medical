@@ -14,6 +14,9 @@ if ROOT not in sys.path:
 
 # 在所有测试模块导入 src 之前设置，确保 get_engine() 读到同一份 DATABASE_URL
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test.db")
+# 强制 fake 模型：测试必须 hermetic、确定性，不依赖 .env 里的真实 LLM（openai 模式会烧 API）
+# load_dotenv 默认不覆盖已存在的环境变量，故在此先钉死 LLM_MODE=fake
+os.environ["LLM_MODE"] = "fake"
 
 import pytest  # noqa: E402
 from src.db import init_db  # noqa: E402
