@@ -187,12 +187,30 @@ class FakeLLM(BaseChatModel):
             yield ChatGenerationChunk(message=AIMessageChunk(content=piece))
 
 
+def _ollama_reachable(base_url: str) -> None:
+    """轻量探测 Ollama 是否可达（避免等到首个 token 才报错）。"""
+    import urllib.request
+
+    url = f"{base_url.rstrip('/')}/api/tags"
+    req = urllib.request.Request(url)
+    with urllib.request.urlopen(req, timeout=2):
+        pass
+
+
 def get_llm():
     if LLM_MODE == "fake":
         return FakeLLM()
     if LLM_MODE == "ollama":
-        from langchain_ollama import ChatOllama
-
+        try:
+            from langchain_ollama import ChatOllama
+        except ImportError:
+            print("[warn] langchain-ollama 未安装，回退到 FakeLLM 演示模式")
+            return FakeLLM()
+        try:
+            _ollama_reachable(OLLAMA_BASE_URL)
+        except Exception as e:
+            print(f"[warn] Ollama 服务不可达（{e}），回退到 FakeLLM 演示模式")
+            return FakeLLM()
         return ChatOllama(base_url=OLLAMA_BASE_URL, model=OLLAMA_MODEL, streaming=True)
     if LLM_MODE in ("openai", "qwen"):
         from langchain_openai import ChatOpenAI

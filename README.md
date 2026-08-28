@@ -61,6 +61,31 @@ uvicorn src.gateway:app --reload --port 8000
 #   医护端：client/review.html
 ```
 
+## 接本地模型（Ollama，推荐）
+
+默认 `fake` 模式用确定性假模型，**无需任何 API key 即可演示全流程**；若要真正用 LLM 回答，推荐接 Ollama 本地模型（本机无 OpenAI key 的最佳选择）：
+
+```bash
+# 1) 安装并启动 Ollama（https://ollama.com），守护进程起来后默认监听 11434
+ollama --version          # 确认已装
+ollama pull qwen2.5:7b   # 推荐；机器吃力可换轻量版 qwen2.5:3b / qwen2.5:1.5b
+
+# 2) 切到 Ollama 模式（.env 里改）
+LLM_MODE=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen2.5:7b
+
+# 3) 重新安装依赖（含 langchain-ollama）并启动
+pip install -r requirements.txt
+uvicorn src.gateway:app --reload --port 8000
+```
+
+要点：
+- `src/llm.py` 的 `get_llm()` 已原生支持 `fake / ollama / openai / qwen` 四种模式，靠 `LLM_MODE` 切换。
+- **优雅降级**：若 `langchain-ollama` 未装或 Ollama 服务不可达，会打印明确警告并自动回退 `fake` 模式，链路不会断。
+- 意图分类在 `src/supervisor.py`：fake 走关键词（确定性、可复现）；真实模型走 LLM 结构化分类，失败回退关键词。
+- 真实模型同样走 `bind_tools` 函数调用范式，敏感动作（锁号/结算/转诊/120）仍触发 `interrupt()` 人工审核门。
+
 ## 跑测试 / 评测
 
 ```bash
@@ -97,21 +122,41 @@ pytest -q                 # 端到端 smoke + 红线/意图评测集
 - **工具调用（bind_tools 函数调用）**：子 Agent 通过 `llm.bind_tools(本命名空间工具)` 让 LLM **自主决定**调用哪些工具，执行结果回填 `ToolMessage` 再汇总；敏感动作（锁号/结算/转诊/120）在执行前触发 `interrupt()` 人工审核门。fake 模式由 `FakeLLM` 确定性返回该命名空间的 `tool_calls`，无需 API 即可演示完整 ReAct。
 - **LangSmith 链路追踪 + 离线评测**：设 `LANGSMITH_TRACING=true` 后 langgraph 运行自动上报；`scripts/eval_offline.py` 复用 `tests/eval` 数据集批量端到端评测，输出红线/意图准确率报告（可一并上报 LangSmith）。
 
-### 启用 PostgreSQL 持久化（可选，生产推荐）
+### 真实落地运行（默认即生产形态）
+
+项目已不是 demo：设置 `DATABASE_URL` 后，**号源/预约/用户/审批/记忆全部落地真实数据库**，鉴权为 JWT 多用户，工具走可插拔的 `DbHub` 适配器。三种运行形态：
+
+| 形态 | 触发条件 | 持久化 | 模型 | 用途 |
+| --- | --- | --- | --- | --- |
+| 真实生产 | `DATABASE_URL=postgresql+psycopg2://...` | 真实 PostgreSQL | Ollama / OpenAI / Qwen | 面试演示 / 部署 |
+| 本地开发 | `DATABASE_URL=sqlite:///./dev.db` | 本地 SQLite（同构 SQL） | Ollama | 零依赖验证 |
+| 离线 demo | 不设置 `DATABASE_URL` | 内存 MemoryHub | fake | 开箱即跑 / CI 秒过 |
+
+**① 本地一键起（macOS + brew Postgres，无需 Docker）**
 
 ```bash
-# 1) 起 Postgres（docker 已就绪）
-docker compose up -d
-
-# 2) 配置连接串（写入 .env）
-export DATABASE_URL=postgresql://med_user:med_pass@localhost:5432/med_agent
-
-# 3) 安装驱动并启动
-pip install sqlalchemy psycopg2-binary
-uvicorn src.gateway:app --reload --port 8000
+cp .env.example .env          # 默认 LLM_MODE=ollama + DATABASE_URL=本地 PG
+./scripts/setup_local.sh      # 起 PG → 建库 → migrate → seed → uvicorn :8000
+# 或分步：make migrate && make seed && make run
 ```
 
-> 说明：SQLAlchemy / psycopg 为 **lazy import**，仅在 `DATABASE_URL` 设置时才需安装，脚手架默认（内存/JSON）模式无需这两个依赖即可运行。
+**② Docker 部署（含 Postgres + 网关）**
+
+```bash
+docker compose up -d          # postgres + app 一键起，app 启动自动 migrate
+# 浏览器打开 client/chat.html（患者端）与 client/review.html（医护端）
+```
+
+**③ 鉴权（JWT 多用户）**：患者/医护分别注册登录，令牌为 JWT；审批接口仅 `doctor` 角色可调。
+
+```bash
+curl -X POST localhost:8000/auth/login -H 'Content-Type: application/json' \
+  -d '{"username":"alice","password":"alice123","role":"patient"}'
+```
+
+> **接真实医院系统**：工具只依赖 `src/integrations` 的端口（Protocol）契约。要接 HIS / 医保网关 / LIS / 短信，
+> 只需新增一个实现这些端口的类（如 `ApiHub`），在 `get_hub()` 里按配置切换——工具与编排代码零改动。
+> 当前 `DbHub` 即为本地可跑的"真实"实现（数据落库），`MemoryHub` 为离线兜底。
 
 ## 离线评测（评测集 + LangSmith 联动）
 
@@ -136,7 +181,7 @@ LANGSMITH_TRACING=true LANGSMITH_API_KEY=ls-xxx python scripts/eval_offline.py
 | `lint` | `ruff check` + `ruff format --check` | 代码风格 / 明显错误 |
 | `test` | `pytest`（Python 3.11 / 3.12 / 3.13 矩阵） | 端到端 smoke + 红线/意图评测集 + 网关/存储单测 |
 | `eval` | `scripts/eval_offline.py` | 红线 / 意图准确率（评测集即守门员），报告作为 artifact 上传 |
-| `integration` | 起 PostgreSQL 16 服务容器 | `tests/test_store.py` 真实持久化往返 |
+| `integration` | 起 PostgreSQL 16 服务容器 | 全量测试跑在**真实 Postgres** 上（conftest 注入 `DATABASE_URL`） |
 
 本地复刻 CI 步骤：
 

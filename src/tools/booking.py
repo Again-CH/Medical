@@ -1,19 +1,21 @@
 from langchain_core.tools import tool
 
+from ..integrations import get_hub
+
 
 @tool
 def query_availability(department: str, date: str = "today") -> str:
     """查询某科室某日的号源。"""
-    return f"[availability] {department} {date} 剩余号源：3"
+    return get_hub().query_availability(department, date)
 
 
 @tool
 def lock_appointment(department: str, date: str, slot: str) -> str:
     """锁定号源（敏感动作，需人工确认）。"""
-    return f"[locked] {department} {date} {slot} 已锁定 appointment_id=APT-1001"
+    return get_hub().lock_appointment(department, date, slot)
 
 
 @tool
 def medicare_settle(appointment_id: str) -> str:
     """医保结算（敏感动作，需人工确认）。"""
-    return f"[settled] {appointment_id} 医保结算完成"
+    return get_hub().medicare_settle(appointment_id)

@@ -95,5 +95,5 @@ jobs:
           python-version: "3.11"
       - name: 安装依赖
         run: pip install -r requirements.txt
-      - name: 运行存储集成测试（真实 Postgres）
-        run: pytest tests/test_store.py -q
+      - name: 全量测试（真实 PostgreSQL 持久化）
+        run: pytest -q

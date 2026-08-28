@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import sys
@@ -27,4 +28,6 @@ def test_intent():
     with open(os.path.join(HERE, "intent_cases.json"), encoding="utf-8") as f:
         cases = json.load(f)
     for c in cases:
-        assert classify_intent(c["text"]) == c["expect"], c["text"]
+        # classify_intent 已为 async（真实模型走 LLM 分类），fake 模式亦统一 await
+        got = asyncio.run(classify_intent(c["text"]))
+        assert got == c["expect"], c["text"]

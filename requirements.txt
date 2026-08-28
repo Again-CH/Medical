@@ -12,3 +12,9 @@ sqlalchemy>=2.0
 psycopg2-binary>=2.9
 # 链路追踪（可选：仅当启用 LANGSMITH_TRACING 时才需要）
 langsmith>=0.1.0
+# 本地模型（可选：LLM_MODE=ollama 时需要；本机无 OpenAI key 的推荐路径）
+langchain-ollama>=0.2.0
+# JWT 鉴权（多用户 / RBAC）
+PyJWT>=2.8
+# 远程模型（可选：LLM_MODE=openai/qwen 时需要，面试演示更稳）
+langchain-openai>=0.2.0

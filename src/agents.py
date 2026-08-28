@@ -18,6 +18,7 @@ from langchain_core.messages import (
 )
 from langgraph.types import interrupt
 
+from .context import patient_ctx, thread_ctx
 from .llm import FakeLLM, acompose, get_llm
 from .memory import append_note
 from .state_utils import last_human
@@ -104,6 +105,9 @@ def _make_agent_node(intent: str):
 
     async def node(state):
         tools = NAMESPACES[intent]
+        # 把请求级上下文写入 contextvars，供 DbHub 关联真实患者（不改工具签名）
+        patient_ctx.set(state.get("patient_id") or "anonymous")
+        thread_ctx.set(state.get("thread_id", ""))
         collected, tool_result = await run_agent_with_tools(
             get_llm(),
             tools,

@@ -1,33 +1,25 @@
 import json
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
-from .config import CORS_ORIGINS, TOKENS
+from .auth import authenticate, get_current_user, register_user, require_doctor
+from .db import is_db_enabled
 from .graph import build_graph
-from .store import STORE
+from .store import get_store
 
 app = FastAPI(title="医疗预约诊疗 Agent")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 graph = build_graph()
-
-
-def auth(authorization: str = Header(None)):
-    t = authorization or ""
-    if t.startswith("Bearer "):
-        t = t[7:]
-    if t not in TOKENS:
-        raise HTTPException(status_code=401, detail="unauthorized")
-    return TOKENS[t]
 
 
 def _event(payload: dict) -> str:
@@ -47,8 +39,45 @@ def _extract_interrupt_value(config):
     return None
 
 
+# ---------------- 认证 ----------------
+@app.post("/auth/register")
+async def register(req: Request):
+    body = await req.json()
+    username = (body.get("username") or "").strip()
+    password = body.get("password") or ""
+    role = body.get("role", "patient")
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="username 与 password 必填")
+    if role not in ("patient", "doctor"):
+        raise HTTPException(status_code=400, detail="role 仅支持 patient/doctor")
+    try:
+        register_user(
+            username,
+            password,
+            role=role,
+            full_name=body.get("full_name", ""),
+            title=body.get("title", ""),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail="用户已存在") from e
+    return {"ok": True, "role": role}
+
+
+@app.post("/auth/login")
+async def login(req: Request):
+    body = await req.json()
+    username = (body.get("username") or "").strip()
+    password = body.get("password") or ""
+    role = body.get("role", "patient")
+    token = authenticate(username, password, role)
+    if not token:
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    return {"access_token": token, "token_type": "bearer", "role": role}
+
+
+# ---------------- 会话（患者） ----------------
 @app.post("/api/chat")
-async def chat(req: Request, user: dict = Depends(auth)):
+async def chat(req: Request, user: dict = Depends(get_current_user)):
     body = await req.json()
     message = body.get("message", "")
     thread_id = body.get("thread_id") or f"thr-{user['sub']}"
@@ -62,7 +91,7 @@ async def chat(req: Request, user: dict = Depends(auth)):
         emitted_tokens = False
         async for ev in graph.astream_events(input_state, config, version="v2"):
             if ev.get("event") == "on_chat_model_stream":
-                # 仅推送 final_answer 节点的 token；子 Agent 内部的工具选择/中间推理不暴露给患者端
+                # 仅推送 final_answer 节点的 token；子 Agent 内部推理不暴露给患者端
                 node = ev.get("metadata", {}).get("langgraph_node")
                 if node is not None and node != "final_answer":
                     continue
@@ -73,10 +102,9 @@ async def chat(req: Request, user: dict = Depends(auth)):
                     yield _event({"type": "token", "text": tok})
                     emitted_tokens = True
 
-        # astream_events 在 interrupt 处只停止流式、不抛异常，需读 state 判断人工门
         interrupt_value = _extract_interrupt_value(config)
         if interrupt_value is not None:
-            aid = STORE.create(thread_id, interrupt_value)
+            aid = get_store().create(thread_id, interrupt_value)
             yield _event({"type": "interrupt", "approval_id": aid, "payload": interrupt_value})
             yield _event({"type": "done", "turn": "human"})
         else:
@@ -85,34 +113,43 @@ async def chat(req: Request, user: dict = Depends(auth)):
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+# ---------------- 审批（医护） ----------------
 @app.get("/api/review/pending")
-async def pending(user: dict = Depends(auth)):
-    return {"pending": STORE.pending()}
+async def pending(user: dict = Depends(require_doctor)):
+    return {"pending": get_store().pending()}
 
 
 @app.post("/api/review/resolve")
-async def resolve(req: Request, user: dict = Depends(auth)):
-    if user["role"] != "doctor":
-        raise HTTPException(status_code=403, detail="doctor only")
+async def resolve(req: Request, user: dict = Depends(require_doctor)):
     body = await req.json()
     aid = body.get("approval_id")
     decision = body.get("decision", {"approved": True})
-    rec = STORE.get(aid)
+    rec = get_store().get(aid)
     if not rec:
         raise HTTPException(status_code=404, detail="approval not found")
     thread_id = rec["thread_id"]
     config = {"configurable": {"thread_id": thread_id}}
     result = await graph.ainvoke(Command(resume=decision), config)
-    STORE.resolve(aid, decision)
+    get_store().resolve(aid, decision)
     final = result["messages"][-1].content
     return {"approval_id": aid, "result": final}
 
 
 @app.get("/api/audit")
-async def audit(user: dict = Depends(auth)):
-    return {"audit": STORE.audit_log()}
+async def audit(user: dict = Depends(require_doctor)):
+    return {"audit": get_store().audit_log()}
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    db_ok = False
+    if is_db_enabled():
+        try:
+            from .db import get_session
+
+            with get_session() as s:
+                s.execute(__import__("sqlalchemy").text("SELECT 1"))
+            db_ok = True
+        except Exception:
+            db_ok = False
+    return {"status": "ok", "db": "up" if db_ok else "memory"}

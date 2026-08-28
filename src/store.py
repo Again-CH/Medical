@@ -1,3 +1,11 @@
+"""审批存储 + 审计日志。
+
+- ApprovalStore：内存/JSON 文件（离线 demo 与单测用）。
+- PostgresApprovalStore：基于 SQLAlchemy ORM + 真实数据库（Postgres/SQLite 同构），
+  仅在设置 DATABASE_URL 时启用；sqlalchemy/psycopg 为懒导入，内存模式下无需安装。
+- get_store()：按 DATABASE_URL 自动选择后端（带缓存）。
+"""
+
 import json
 import os
 import threading
@@ -16,7 +24,6 @@ def _now():
 
 
 def _jsonable(obj):
-    """把 Postgres 返回的 datetime 等对象转成可 JSON 序列化的形式。"""
     if isinstance(obj, datetime):
         return obj.isoformat()
     if isinstance(obj, dict):
@@ -27,7 +34,7 @@ def _jsonable(obj):
 
 
 class ApprovalStore:
-    """审批存储 + 审计日志。Memory / Json 文件可插拔（生产换 Postgres）。"""
+    """审批存储 + 审计日志。Memory / Json 文件可插拔。"""
 
     def __init__(self, path: str = APPROVAL_STORE):
         self.path = path
@@ -92,133 +99,155 @@ class ApprovalStore:
 
 
 class PostgresApprovalStore:
-    """生产级审批存储：基于 SQLAlchemy Core + PostgreSQL。
+    """生产级审批存储：基于 SQLAlchemy ORM + 真实数据库（Postgres/SQLite 同构）。
 
-    仅在设置了 DATABASE_URL 时启用；sqlalchemy/psycopg 为 lazy import，
-    因此内存/文件模式下无需安装这两个依赖，脚手架仍可开箱即跑。
+    表结构与 db.py 的 Approval / AuditLog 模型一致；sqlalchemy 为懒导入，
+    因此内存/文件模式下无需安装该依赖，脚手架仍可开箱即跑。
     """
 
     def __init__(self, url: str):
-        from sqlalchemy import JSON, Column, DateTime, MetaData, String, Table, create_engine
+        from sqlalchemy import create_engine
 
-        self.engine = create_engine(url, future=True)
-        self.metadata = MetaData()
-        self.approvals = Table(
-            "approvals",
-            self.metadata,
-            Column("id", String(64), primary_key=True),
-            Column("thread_id", String(128)),
-            Column("payload", JSON),
-            Column("status", String(16)),
-            Column("created_at", DateTime),
-            Column("decision", JSON),
-            Column("resolved_at", DateTime),
-        )
-        self.audit = Table(
-            "audit_log",
-            self.metadata,
-            Column("id", String(64), primary_key=True),
-            Column("action", String(16)),
-            Column("approval_id", String(64)),
-            Column("thread_id", String(128)),
-            Column("payload", JSON),
-            Column("status", String(16)),
-            Column("decision", JSON),
-            Column("created_at", DateTime),
-        )
-        self.metadata.create_all(self.engine)
+        from .db import Base
+
+        self.engine = create_engine(url, pool_pre_ping=True, future=True)
+        Base.metadata.create_all(self.engine)
 
     def create(self, thread_id, payload):
+        from sqlalchemy.orm import sessionmaker
+
+        from .db import Approval, AuditLog
+
+        Session = sessionmaker(bind=self.engine)
         aid = "APR-" + uuid.uuid4().hex[:8]
         now = datetime.now(timezone.utc)
-        rec = {
-            "id": aid,
-            "thread_id": thread_id,
-            "payload": payload,
-            "status": "pending",
-            "created_at": now,
-        }
-        with self.engine.begin() as conn:
-            conn.execute(self.approvals.insert().values(**rec))
-            conn.execute(
-                self.audit.insert().values(
-                    id=uuid.uuid4().hex,
-                    action="create",
-                    approval_id=aid,
+        with Session() as s:
+            s.add(
+                Approval(
+                    id=aid,
                     thread_id=thread_id,
-                    payload=payload,
+                    action=(payload or {}).get("action"),
+                    payload=json.dumps(payload, ensure_ascii=False),
                     status="pending",
                     created_at=now,
                 )
             )
+            s.add(
+                AuditLog(
+                    actor=thread_id,
+                    action="create",
+                    detail=json.dumps(payload, ensure_ascii=False),
+                )
+            )
+            s.commit()
         return aid
 
     def resolve(self, approval_id, decision):
+        from sqlalchemy.orm import sessionmaker
+
+        from .db import Approval, AuditLog
+
+        Session = sessionmaker(bind=self.engine)
         now = datetime.now(timezone.utc)
-        with self.engine.begin() as conn:
-            conn.execute(
-                self.approvals.update()
-                .where(self.approvals.c.id == approval_id)
-                .values(
-                    status="resolved",
-                    decision=decision,
-                    resolved_at=now,
-                )
-            )
-            row = (
-                conn.execute(self.approvals.select().where(self.approvals.c.id == approval_id))
-                .mappings()
-                .first()
-            )
-            conn.execute(
-                self.audit.insert().values(
-                    id=uuid.uuid4().hex,
+        with Session() as s:
+            ap = s.get(Approval, approval_id)
+            if ap is None:
+                raise KeyError(approval_id)
+            ap.status = "resolved"
+            ap.decision = json.dumps(decision, ensure_ascii=False)
+            ap.resolved_at = now
+            s.add(
+                AuditLog(
+                    actor=approval_id,
                     action="resolve",
-                    approval_id=approval_id,
-                    thread_id=row["thread_id"],
-                    payload=row["payload"],
-                    status="resolved",
-                    decision=decision,
-                    created_at=now,
+                    detail=json.dumps(decision, ensure_ascii=False),
                 )
             )
-            return _jsonable(dict(row))
+            s.commit()
+            return {
+                "id": ap.id,
+                "thread_id": ap.thread_id,
+                "payload": json.loads(ap.payload),
+                "status": ap.status,
+                "created_at": ap.created_at,
+                "decision": decision,
+            }
 
     def pending(self):
-        with self.engine.connect() as conn:
-            rows = (
-                conn.execute(self.approvals.select().where(self.approvals.c.status == "pending"))
-                .mappings()
-                .all()
-            )
-        return _jsonable([dict(r) for r in rows])
+        from sqlalchemy.orm import sessionmaker
+
+        from .db import Approval
+
+        Session = sessionmaker(bind=self.engine)
+        with Session() as s:
+            rows = s.query(Approval).filter(Approval.status == "pending").all()
+            return [
+                {
+                    "id": r.id,
+                    "thread_id": r.thread_id,
+                    "payload": json.loads(r.payload),
+                    "status": r.status,
+                    "created_at": r.created_at,
+                }
+                for r in rows
+            ]
 
     def audit_log(self):
-        with self.engine.connect() as conn:
-            rows = (
-                conn.execute(self.audit.select().order_by(self.audit.c.created_at)).mappings().all()
+        from sqlalchemy import select
+        from sqlalchemy.orm import sessionmaker
+
+        from .db import AuditLog
+
+        Session = sessionmaker(bind=self.engine)
+        with Session() as s:
+            rows = s.execute(select(AuditLog).order_by(AuditLog.created_at)).scalars().all()
+            return _jsonable(
+                [
+                    {
+                        "id": r.id,
+                        "actor": r.actor,
+                        "action": r.action,
+                        "detail": r.detail,
+                        "created_at": r.created_at,
+                    }
+                    for r in rows
+                ]
             )
-        return _jsonable([dict(r) for r in rows])
 
     def get(self, approval_id):
-        with self.engine.connect() as conn:
-            row = (
-                conn.execute(self.approvals.select().where(self.approvals.c.id == approval_id))
-                .mappings()
-                .first()
-            )
-        return _jsonable(dict(row)) if row else None
+        from sqlalchemy.orm import sessionmaker
+
+        from .db import Approval
+
+        Session = sessionmaker(bind=self.engine)
+        with Session() as s:
+            ap = s.get(Approval, approval_id)
+            if ap is None:
+                return None
+            return {
+                "id": ap.id,
+                "thread_id": ap.thread_id,
+                "payload": json.loads(ap.payload),
+                "status": ap.status,
+                "created_at": ap.created_at,
+                "decision": json.loads(ap.decision) if ap.decision else None,
+            }
+
+
+_store_cache: dict = {}
 
 
 def get_store():
+    """按 DATABASE_URL 自动选择后端（带缓存）。"""
     url = os.getenv("DATABASE_URL")
     if url:
-        try:
-            return PostgresApprovalStore(url)
-        except Exception as e:  # 配置了但连不上：降级内存（生产应接告警）
-            print(f"[store] DATABASE_URL 已配置但初始化失败，降级为内存存储: {e}")
-            return ApprovalStore()
-    return ApprovalStore()
-
-
-STORE = get_store()
+        if url not in _store_cache:
+            try:
+                _store_cache[url] = PostgresApprovalStore(url)
+            except Exception as e:  # 配置了但连不上：降级内存（生产应接告警）
+                print(f"[store] DATABASE_URL 已配置但初始化失败，降级为内存存储: {e}")
+                return ApprovalStore()
+        return _store_cache[url]
+    if "memory" not in _store_cache:
+        _store_cache["memory"] = ApprovalStore()
+    return _store_cache["memory"]

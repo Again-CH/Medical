@@ -1,6 +1,7 @@
-"""网关 HTTP 冒烟测试：用 FastAPI TestClient 验证鉴权与服务可用。
+"""网关 HTTP 测试：用 FastAPI TestClient 验证 JWT 鉴权、RBAC 与 SSE 流式。
 
-不依赖真实 LLM / Postgres：使用 fake 模型 + 内存存储即可开箱验证。
+全部跑在真实数据库（conftest 设置的 sqlite）上：注册/登录落库、审批/审计走 ORM 存储。
+不依赖外部 LLM（默认 fake 模式即可跑通 SSE 流式）。
 """
 
 import os
@@ -9,15 +10,16 @@ import sys
 import pytest
 from fastapi.testclient import TestClient
 
-# 确保能 import src 包（与 test_graph.py 一致）
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from src.auth import create_token  # noqa: E402
 from src.gateway import app  # noqa: E402
 
-PATIENT_TOKEN = "Bearer patient:alice"
-DOCTOR_TOKEN = "Bearer doctor:drwang"
+# 直接用 auth 的 create_token 签发 JWT（也可走 /auth/login 端点，见 test_login_flow）
+PATIENT_TOKEN = "Bearer " + create_token("alice", "patient")
+DOCTOR_TOKEN = "Bearer " + create_token("drwang", "doctor")
 
 
 @pytest.fixture
@@ -39,20 +41,45 @@ def test_auth_required(client):
         client.get("/api/review/pending", headers={"Authorization": "Bearer bad"}).status_code
         == 401
     )
-    # 正确 token → 200
-    r = client.get("/api/review/pending", headers={"Authorization": PATIENT_TOKEN})
+    # 患者 token 不能访问医护接口（需 doctor）→ 403
+    assert (
+        client.get("/api/review/pending", headers={"Authorization": PATIENT_TOKEN}).status_code
+        == 403
+    )
+    # 医生 token → 200
+    r = client.get("/api/review/pending", headers={"Authorization": DOCTOR_TOKEN})
     assert r.status_code == 200
     assert "pending" in r.json()
 
 
 def test_rbac_doctor_only_on_resolve(client):
-    # 患者 token 不能审批
     r = client.post(
         "/api/review/resolve",
         headers={"Authorization": PATIENT_TOKEN},
         json={"approval_id": "x", "decision": {"approved": True}},
     )
     assert r.status_code == 403
+
+
+def test_login_flow(client):
+    # 注册 → 登录 → 拿到 JWT
+    r = client.post(
+        "/auth/register",
+        json={"username": "bob", "password": "bob123", "role": "patient"},
+    )
+    assert r.status_code == 200
+    r = client.post(
+        "/auth/login",
+        json={"username": "alice", "password": "alice123", "role": "patient"},
+    )
+    assert r.status_code == 200
+    assert r.json()["access_token"]
+    # 错误密码 → 401
+    bad = client.post(
+        "/auth/login",
+        json={"username": "alice", "password": "wrong", "role": "patient"},
+    )
+    assert bad.status_code == 401
 
 
 def test_audit_endpoint(client):

@@ -1,13 +1,15 @@
 from langchain_core.tools import tool
 
+from ..integrations import get_hub
+
 
 @tool
 def handoff() -> str:
     """转接急诊人工台。"""
-    return "[emergency] 已转接急诊人工台，请保持通话"
+    return get_hub().handoff()
 
 
 @tool
 def call_120() -> str:
     """拨打 120 急救。"""
-    return "[emergency] 已触发 120 呼叫流程"
+    return get_hub().call_120(None, "")

@@ -1,8 +1,7 @@
-# 生产化依赖：PostgreSQL 持久化审批/审计数据
+# 生产化部署：PostgreSQL 持久化 + 网关服务一键起
 # 用法：
 #   docker compose up -d
-#   export DATABASE_URL=postgresql://med_user:med_pass@localhost:5432/med_agent
-#   uvicorn src.gateway:app --reload --port 8000
+#   # 浏览器打开 client/chat.html（患者端）与 client/review.html（医护端）
 services:
   postgres:
     image: postgres:16-alpine
@@ -16,6 +15,33 @@ services:
       - "5432:5432"
     volumes:
       - med_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U med_user -d med_agent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    container_name: med_agent_app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://med_user:med_pass@postgres:5432/med_agent
+      LLM_MODE: ${LLM_MODE:-ollama}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:1.5b}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-prod}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   med_pg_data:
