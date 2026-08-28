@@ -4,7 +4,7 @@
 PG_USER ?= $(USER)
 DB_URL ?= postgresql+psycopg2://$(PG_USER)@localhost:5432/medical_agent
 
-.PHONY: db-up migrate seed run test lint format eval ci-local
+.PHONY: db-up migrate seed run test lint format eval check-migrations ci-local
 
 db-up:
 	./scripts/setup_local.sh
@@ -33,5 +33,9 @@ format:
 eval:
 	.venv/bin/python scripts/eval_offline.py
 
-# 本地模拟 CI：lint + test + eval 一遍
-ci-local: lint test eval
+# schema 漂移检查：ORM 模型必须与 Alembic 迁移一致（默认临时 SQLite，无需外部库）
+check-migrations:
+	.venv/bin/python scripts/check_migrations.py
+
+# 本地模拟 CI：lint + 漂移检查 + test + eval 一遍
+ci-local: lint check-migrations test eval

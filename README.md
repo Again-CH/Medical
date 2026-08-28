@@ -144,6 +144,10 @@ cp .env.example .env          # 默认 LLM_MODE=ollama + DATABASE_URL=本地 PG
 > 按 `alembic/versions/` 下的带版本迁移演进 schema（可回滚、可演进）。后续要改表结构，只需修改
 > `src/db.py` 中的模型，再运行 `DATABASE_URL=<库> .venv/bin/alembic revision --autogenerate -m "<描述>"`
 > 生成新迁移即可，无需手写 SQL。旧库（曾用 `create_all` 建表）首次启动会自动 `stamp head`，不会重复建表。
+>
+> **防漂移（CI 门禁）**：`make check-migrations`（或 CI 的 `schema-drift` / `integration` 任务）会执行
+> `alembic check`，把 `src/db.py` 的 ORM 模型与迁移定义的 schema 做对比。若改了模型却忘了生成新迁移，
+> 检查会失败并阻断合并——从源头杜绝「模型与迁移长期分叉」。本地可用 `make ci-local` 一键跑全套门禁。
 
 **② Docker 部署（含 Postgres + 网关）**
 

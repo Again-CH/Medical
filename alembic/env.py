@@ -37,6 +37,18 @@ if DATABASE_URL:
 target_metadata = Base.metadata
 
 
+def include_object(object, name, type_, reflected, compare_to):
+    """autogenerate / check 时排除非本项目的表。
+
+    LangGraph 的 checkpoint_* 表由 AsyncPostgresSaver.setup() 自行管理，
+    不属于 src.db.Base.metadata；若不排除，alembic check 会误报「应删除这些表」，
+    且 autogenerate 可能错误地生成 drop 语句。这里统一忽略，保持 Alembic 只管业务表。
+    """
+    if type_ == "table" and name and name.startswith("checkpoint"):
+        return False
+    return True
+
+
 def run_migrations_offline() -> None:
     """离线模式：只产出 SQL 脚本，不连库。"""
     url = DATABASE_URL or config.get_main_option("sqlalchemy.url")
@@ -46,6 +58,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -63,6 +76,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
+            include_object=include_object,
         )
         with context.begin_transaction():
             context.run_migrations()

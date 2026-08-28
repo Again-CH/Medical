@@ -48,6 +48,20 @@ jobs:
       - name: 运行测试（默认 fake 模型 + 内存存储，开箱即跑）
         run: pytest -q
 
+  # ②.5 schema 漂移门禁：ORM 模型必须与 Alembic 迁移一致，否则合并即失败
+  #     默认用临时 SQLite（无需外部数据库），快速反馈；方言级校验见 integration 任务。
+  schema-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+      - name: 检查 ORM 模型与迁移是否一致（防漂移）
+        run: python scripts/check_migrations.py
+
   # ③ 离线评测门禁：复用 tests/eval 数据集，红线/意图准确率即为守门员
   eval:
     runs-on: ubuntu-latest
@@ -97,3 +111,5 @@ jobs:
         run: pip install -r requirements.txt
       - name: 全量测试（真实 PostgreSQL 持久化）
         run: pytest -q
+      - name: 迁移一致性校验（Postgres 方言，防模型/迁移漂移）
+        run: python scripts/check_migrations.py
