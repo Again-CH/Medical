@@ -1,0 +1,21 @@
+# 生产化依赖：PostgreSQL 持久化审批/审计数据
+# 用法：
+#   docker compose up -d
+#   export DATABASE_URL=postgresql://med_user:med_pass@localhost:5432/med_agent
+#   uvicorn src.gateway:app --reload --port 8000
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: med_agent_pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: med_user
+      POSTGRES_PASSWORD: med_pass
+      POSTGRES_DB: med_agent
+    ports:
+      - "5432:5432"
+    volumes:
+      - med_pg_data:/var/lib/postgresql/data
+
+volumes:
+  med_pg_data:

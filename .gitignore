@@ -1,0 +1,26 @@
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 环境变量与密钥
+.env
+.env.local
+
+# 本地审批存储/评测产物（CI 另有 artifact）
+approvals*.json
+eval_report.json
+
+# macOS
+.DS_Store
+
+# 编辑器
+.idea/
+.vscode/

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>患者端 · 医疗预约诊疗</title>
+  <style>body{font-family:-apple-system,"PingFang SC",system-ui,sans-serif;max-width:720px;margin:24px auto;padding:0 16px}#out{white-space:pre-wrap;background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:12px;min-height:120px}input{width:60%;padding:8px}button{padding:8px 14px}</style>
+</head>
+<body>
+  <h3>患者端 · 医疗预约诊疗（SSE 流式）</h3>
+  <div><input id="msg" placeholder="例如：我头痛挂什么科 / 我要挂号预约神经内科" /><button onclick="send()">发送</button></div>
+  <pre id="out"></pre>
+  <script>
+    const TOKEN = "Bearer patient:alice";
+    const tid = "thr-alice-demo";
+    async function send() {
+      const msg = document.getElementById("msg").value;
+      const out = document.getElementById("out");
+      out.textContent = "";
+      const resp = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: TOKEN },
+        body: JSON.stringify({ message: msg, thread_id: tid }),
+      });
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value);
+        buf.split("\n\n").forEach((block) => {
+          if (block.startsWith("data:")) {
+            const p = JSON.parse(block.slice(5));
+            if (p.type === "token") out.textContent += p.text;
+            if (p.type === "interrupt")
+              out.textContent += "\n[需医生审核 approval_id=" + p.approval_id + "，请等待医护端处理]\n";
+          }
+        });
+        buf = "";
+      }
+    }
+  </script>
+</body>
+</html>

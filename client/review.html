@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>医护端 · 审核台</title>
+  <style>body{font-family:-apple-system,"PingFang SC",system-ui,sans-serif;max-width:760px;margin:24px auto;padding:0 16px}li{margin:8px 0;padding:8px;border:1px solid #fecaca;border-radius:8px;background:#fef2f2}button{margin-left:6px;padding:4px 10px}</style>
+</head>
+<body>
+  <h3>医护端 · 人工审核台</h3>
+  <button onclick="load()">加载待审</button>
+  <button onclick="load()">刷新</button>
+  <ul id="list"></ul>
+  <script>
+    const TOKEN = "Bearer doctor:drwang";
+    async function load() {
+      const r = await fetch("/api/review/pending", { headers: { Authorization: TOKEN } });
+      const d = await r.json();
+      const ul = document.getElementById("list");
+      ul.innerHTML = "";
+      if (!d.pending.length) { ul.innerHTML = "<li>暂无待审</li>"; return; }
+      d.pending.forEach((p) => {
+        const li = document.createElement("li");
+        li.textContent = p.payload.action + " · " + JSON.stringify(p.payload) + " ";
+        const b = document.createElement("button");
+        b.textContent = "批准";
+        b.onclick = () => resolve(p.approval_id, true);
+        const b2 = document.createElement("button");
+        b2.textContent = "拒绝";
+        b2.onclick = () => resolve(p.approval_id, false);
+        li.appendChild(b);
+        li.appendChild(b2);
+        ul.appendChild(li);
+      });
+    }
+    async function resolve(aid, ok) {
+      await fetch("/api/review/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: TOKEN },
+        body: JSON.stringify({ approval_id: aid, decision: { approved: ok } }),
+      });
+      load();
+    }
+    load();
+  </script>
+</body>
+</html>

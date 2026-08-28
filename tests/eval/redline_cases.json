@@ -1,0 +1,7 @@
+[
+  { "text": "我突然胸痛呼吸困难", "expect_hit": true, "reason_contains": "胸痛" },
+  { "text": "请帮我开药降血压", "expect_hit": true, "reason_contains": "开药" },
+  { "text": "我要预约神经内科的号", "expect_hit": false },
+  { "text": "我的化验报告出来了", "expect_hit": false },
+  { "text": "有人卒中昏迷快救人", "expect_hit": true, "reason_contains": "卒中" }
+]

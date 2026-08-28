@@ -1,0 +1,34 @@
+[project]
+name = "medical-agent"
+version = "0.1.0"
+description = "医疗预约诊疗系统 Agent（LangGraph + FastAPI，中枢辐射编排 + 人工审核门 + 合规横切层）"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.ruff]
+# 与 CI 中 `ruff check .` / `ruff format --check .` 保持一致
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+# 偏保守的规则集：先保 CI 绿，后续可按需放开
+select = [
+    "E",    # pycodestyle 错误
+    "F",    # pyflakes（未定义/未使用）
+    "I",    # isort 导入排序
+    "W",    # pycodestyle 警告
+    "B",    # flake8-bugbear（常见 bug 模式）
+]
+ignore = [
+    "E501", # 行长度交给 formatter 处理，不单独报错
+    "B008", # FastAPI 依赖用函数引用是惯例（Depends(auth)）
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 评测脚本重新定义 print 用于 flush，B029 不适用
+"scripts/eval_offline.py" = ["B029"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
