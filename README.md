@@ -129,7 +129,7 @@ LANGSMITH_TRACING=true LANGSMITH_API_KEY=ls-xxx python scripts/eval_offline.py
 
 ## CI 持续集成
 
-已内置 GitHub Actions（`.github/workflows/ci.yml`），推到 GitHub 后自动运行，覆盖「代码质量 → 测试 → 评测 → 集成」四道门禁：
+已内置 GitHub Actions（`.github/workflows/ci.yml`），推到 GitHub 后自动运行，覆盖「代码质量 → 测试 → 评测 → 集成」四道门禁。踩坑点与复用清单见 [`docs/ci-quickref.md`](docs/ci-quickref.md)。
 
 | Job | 作用 | 卡点 |
 | --- | --- | --- |
