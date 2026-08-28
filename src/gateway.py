@@ -1,4 +1,5 @@
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -8,11 +9,28 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
 from .auth import authenticate, get_current_user, register_user, require_doctor
-from .db import is_db_enabled
-from .graph import build_graph
+from .db import init_db, is_db_enabled
+from .graph import build_graph, build_pg_checkpointer
+from .seed import seed_all
 from .store import get_store
 
-app = FastAPI(title="医疗预约诊疗 Agent")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 启动时幂等建表 + 播种：确保 pending_calls / appointments 等业务表存在，
+    # 使 HITL 待审批缓存（pending_calls）持久化真正生效。
+    if is_db_enabled():
+        init_db()
+        seed_all()
+    # 构建异步 Postgres checkpointer（绑定本事件循环），注入 graph 实现会话状态跨重启持久化；
+    # 非 Postgres / 连接失败则保持默认内存 checkpointer。
+    cp = await build_pg_checkpointer()
+    if cp is not None:
+        globals()["graph"] = build_graph(checkpointer=cp)
+    yield
+
+
+app = FastAPI(title="医疗预约诊疗 Agent", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

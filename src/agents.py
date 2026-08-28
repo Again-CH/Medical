@@ -19,6 +19,7 @@ from langchain_core.messages import (
 from langgraph.types import interrupt
 
 from .context import patient_ctx, thread_ctx
+from .db import clear_pending, is_db_enabled, pop_pending, set_pending
 from .llm import FakeLLM, acompose, get_llm
 from .memory import append_note
 from .state_utils import last_human
@@ -50,8 +51,40 @@ APPROVAL_ACTION = {
 # 为什么需要：LangGraph 的 interrupt() 在 resume 时把节点从头重跑；若重跑时真实 LLM
 # 不再生成敏感工具调用，会导致「已批准却没执行」。故把待审批的 tool_calls 缓存，
 # resume 重跑直接执行，保证落库确定性。
-# 注意：模块级缓存在单进程内有效；多进程/重启场景应改用 checkpointer 持久化 pending。
-_PENDING: dict[str, list] = {}
+# 持久化：有 DATABASE_URL 时落 pending_calls 表（跨进程/重启不丢），否则内存兜底。
+class _PendingStore:
+    def __init__(self) -> None:
+        self._mem: dict[str, list] = {}
+
+    def pop(self, key, default=None):
+        if is_db_enabled():
+            try:
+                v = pop_pending(key)
+                return v if v is not None else default
+            except Exception:
+                return self._mem.pop(key, default)
+        return self._mem.pop(key, default)
+
+    def __setitem__(self, key, value):
+        if is_db_enabled():
+            try:
+                set_pending(key, value)
+                return
+            except Exception:
+                pass
+        self._mem[key] = value
+
+    def clear(self):
+        if is_db_enabled():
+            try:
+                clear_pending()
+                return
+            except Exception:
+                pass
+        self._mem.clear()
+
+
+_PENDING = _PendingStore()
 
 
 async def run_agent_with_tools(llm, tools, state, system, sensitive_tools, approval_action):

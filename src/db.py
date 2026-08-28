@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
 
@@ -222,3 +223,56 @@ def drop_db() -> None:
     eng = get_engine()
     if eng is not None:
         Base.metadata.drop_all(eng)
+
+
+class PendingCall(Base):
+    """待人工审批的敏感工具调用缓存（HITL 持久化）。
+
+    LangGraph 的 interrupt() 在 resume 时会把节点从头重跑；若重跑时真实 LLM
+    不再生成敏感工具调用，会导致「已批准却没执行」。故把待审批的 tool_calls
+    落地到本表，resume 重跑直接读取执行，保证落库确定性，且跨进程/重启不丢。
+    """
+
+    __tablename__ = "pending_calls"
+    cache_key = mapped_column(String(128), primary_key=True)
+    calls = mapped_column(Text, nullable=False)  # 敏感 tool_calls 的 JSON
+    created_at = mapped_column(DateTime, default=utcnow)
+
+
+def set_pending(cache_key: str, calls: list) -> None:
+    """持久化待审批的敏感工具调用（覆盖写）。"""
+    from sqlalchemy import delete
+
+    eng = get_engine()
+    if eng is None:
+        raise RuntimeError("DATABASE_URL 未设置，无法持久化 pending")
+    with Session(eng) as s:
+        s.execute(delete(PendingCall).where(PendingCall.cache_key == cache_key))
+        s.add(PendingCall(cache_key=cache_key, calls=json.dumps(calls, ensure_ascii=False)))
+        s.commit()
+
+
+def pop_pending(cache_key: str):
+    """取出并删除待审批调用；不存在返回 None。"""
+    eng = get_engine()
+    if eng is None:
+        return None
+    with Session(eng) as s:
+        row = s.get(PendingCall, cache_key)
+        if row is None:
+            return None
+        calls = json.loads(row.calls)
+        s.delete(row)
+        s.commit()
+        return calls
+
+
+def clear_pending() -> None:
+    eng = get_engine()
+    if eng is None:
+        return
+    from sqlalchemy import delete
+
+    with Session(eng) as s:
+        s.execute(delete(PendingCall))
+        s.commit()
