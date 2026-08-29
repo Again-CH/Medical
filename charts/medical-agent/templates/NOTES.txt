@@ -1,0 +1,23 @@
+医疗诊疗 Agent 已部署到 Release: {{ .Release.Name }}（命名空间: {{ .Release.Namespace }}）。
+
+1. 检查 Pod 状态：
+   kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+2. 端口转发到本地预览：
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "medical-agent.fullname" . }} 8000:8000
+   然后浏览器打开 http://127.0.0.1:8000/（患者端）/ /review（医护端）
+
+3. 密钥校验（fail-closed）：
+   若 Secret「{{ include "medical-agent.secretName" . }}」缺失，Pod 会处于
+   CreateContainerConfigError——这正是不许弱口令进生产的保护。请用
+   scripts/gen-secrets.sh 生成，或接入 SealedSecrets / External Secrets。
+
+{{- if .Values.ingress.enabled }}
+4. Ingress 已启用：{{ .Values.ingress.host }}
+{{- else }}
+4. Ingress 未启用（默认）。生产建议启用并配置 TLS。
+{{- end }}
+
+{{- if not .Values.postgresql.enabled }}
+注：当前未随 chart 部署 Postgres，DATABASE_URL 必须由外部托管库经 Secret 提供。
+{{- end }}

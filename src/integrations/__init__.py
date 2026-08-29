@@ -49,6 +49,7 @@ from ..db import (
     run_idempotent,
 )
 from ..logging_config import get_logger
+from ..tenant import resolve_tenant_id
 
 log = get_logger()
 
@@ -293,12 +294,14 @@ def _resolve_user_id(username: str) -> int:
 class DbHub:
     # --- HIS ---
     def search_department(self, symptom: str) -> str:
+        tid = resolve_tenant_id()
         with get_session() as s:
-            rows = s.query(SymptomDeptMap).all()
+            rows = s.query(SymptomDeptMap).filter(SymptomDeptMap.tenant_id == tid).all()
             for r in rows:
                 if r.keyword and r.keyword in symptom:
                     dept = s.get(Department, r.dept_id)
-                    return f"建议科室：{dept.name}"
+                    if dept and dept.tenant_id == tid:
+                        return f"建议科室：{dept.name}"
             return "建议科室：请到分诊台由导诊进一步评估"
 
     def dept_map_rag(self, symptom: str) -> str:
@@ -317,7 +320,12 @@ class DbHub:
         if date in ("", "today"):
             date = _today()
         with get_session() as s:
-            dept = s.query(Department).filter(Department.name == department).first()
+            tid = resolve_tenant_id()
+            dept = (
+                s.query(Department)
+                .filter(Department.name == department, Department.tenant_id == tid)
+                .first()
+            )
             if not dept:
                 return f"[availability] 未找到科室「{department}」"
             remaining = 0
@@ -336,7 +344,12 @@ class DbHub:
         if date in ("", "today"):
             date = _today()
         with get_session() as s:
-            dept = s.query(Department).filter(Department.name == department).first()
+            tid = resolve_tenant_id()
+            dept = (
+                s.query(Department)
+                .filter(Department.name == department, Department.tenant_id == tid)
+                .first()
+            )
             if not dept:
                 return f"[locked] 未找到科室「{department}」，锁号失败"
 

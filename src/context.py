@@ -11,3 +11,5 @@ from contextvars import ContextVar
 patient_ctx: ContextVar[str] = ContextVar("patient_ctx", default="anonymous")
 # 当前会话/线程标识
 thread_ctx: ContextVar[str] = ContextVar("thread_ctx", default="")
+# 当前请求的租户标识（来自 X-Tenant-Id 头 / 默认租户），None 表示回退默认租户
+tenant_ctx: ContextVar[object] = ContextVar("tenant_ctx", default=None)

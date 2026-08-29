@@ -40,3 +40,8 @@ medical_agent.db
 # 可观测性栈：Prometheus 抓取用的管理员密钥（含 ADMIN_API_KEY，禁止入库）
 observability/prometheus/admin_key
 
+# 前端构建产物与依赖（由 `npm run build` 复现，不入 VCS）
+client/node_modules/
+client/dist/
+client/test-results/
+

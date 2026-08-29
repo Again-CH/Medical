@@ -1,0 +1,87 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "medical-agent.fullname" . }}-pg-data
+  labels:
+    {{- include "medical-agent.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.postgresql.persistentVolume.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "medical-agent.fullname" . }}-postgresql
+  labels:
+    {{- include "medical-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "medical-agent.name" . }}
+      app.kubernetes.io/component: postgresql
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "medical-agent.name" . }}
+        app.kubernetes.io/component: postgresql
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+      containers:
+        - name: postgresql
+          image: {{ .Values.postgresql.image }}
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "medical-agent.fullname" . }}-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "medical-agent.fullname" . }}-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "medical-agent.fullname" . }}-postgresql-secret
+                  key: postgres-password
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "{{ .Values.postgresql.auth.username }}"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "medical-agent.fullname" . }}-pg-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "medical-agent.fullname" . }}-postgresql
+  labels:
+    {{- include "medical-agent.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ include "medical-agent.name" . }}
+    app.kubernetes.io/component: postgresql
+  ports:
+    - port: 5432
+      targetPort: 5432
+{{- end }}

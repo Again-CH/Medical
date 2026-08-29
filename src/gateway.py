@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 from pydantic import BaseModel, Field
@@ -66,6 +67,7 @@ from .db import (
     ExamStep,
     LabReport,
     Reminder,
+    Tenant,
     User,
     VitalSign,
     ensure_patient_db,
@@ -113,6 +115,7 @@ from .safety import (
 from .seed import seed_all
 from .store import get_store
 from .supervisor import _keyword_intent  # 仅用于指标标签的兜底意图猜测（纯关键词，零成本）
+from .tenant import resolve_tenant_id, set_tenant_context
 from .tracing import hex_to_trace_id, span
 from .tracing import shutdown as shutdown_tracing
 
@@ -658,6 +661,85 @@ def _require_admin_key(req: Request) -> None:
         raise HTTPException(status_code=401, detail="管理员密钥无效")
 
 
+# ---------------- 多租户上下文（X-Tenant-Id 头 → 上下文变量）----------------
+async def require_tenant_context(request: Request) -> None:
+    """把 ``X-Tenant-Id`` 请求头解析为当前租户上下文。
+
+    租户解析优先级：X-Tenant-Id 头（显式）> 默认租户。工具与端点内统一经
+    ``resolve_tenant_id()`` 取用，无需手工传参。非法值忽略（回退默认租户）。
+
+    安全约束：租户标识只来自服务端上下文 / 受控请求头，工具 schema 不含
+    ``tenant_id`` 入参——prompt injection 无法操纵跨租户读取科室主数据。
+    """
+    raw = request.headers.get("X-Tenant-Id")
+    tid: Optional[int] = None
+    if raw:
+        try:
+            tid = int(raw)
+        except (ValueError, TypeError):
+            tid = None
+    set_tenant_context(tid)
+
+
+@app.post("/api/admin/tenants")
+async def create_tenant(req: Request, _: None = Depends(_require_admin_key)):
+    """新建院区 / 租户。"""
+    body = await req.json()
+    code = (body.get("code") or "").strip()
+    name = (body.get("name") or "").strip()
+    if not code or not name:
+        raise HTTPException(status_code=400, detail="code 与 name 必填")
+    with get_session() as s:
+        if s.query(Tenant).filter(Tenant.code == code).first():
+            raise HTTPException(status_code=409, detail="租户 code 已存在")
+        t = Tenant(code=code, name=name, is_default=False)
+        s.add(t)
+        s.flush()
+        tid = t.id
+        s.commit()
+    return {"ok": True, "id": tid, "code": code, "name": name}
+
+
+@app.get("/api/admin/tenants")
+async def list_tenants(_: None = Depends(_require_admin_key)):
+    """列出全部院区 / 租户。"""
+    with get_session() as s:
+        rows = s.query(Tenant).order_by(Tenant.id).all()
+        return [
+            {"id": t.id, "code": t.code, "name": t.name, "is_default": t.is_default} for t in rows
+        ]
+
+
+@app.post("/api/admin/departments")
+async def create_department(req: Request, _: None = Depends(_require_admin_key)):
+    """在指定租户下新建科室（tenant_id 缺省归属当前解析租户）。"""
+    body = await req.json()
+    code = (body.get("code") or "").strip()
+    name = (body.get("name") or "").strip()
+    desc = body.get("description") or ""
+    tid = body.get("tenant_id")
+    if not code or not name:
+        raise HTTPException(status_code=400, detail="code 与 name 必填")
+    if tid is not None:
+        try:
+            tid = int(tid)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="tenant_id 非法") from None
+    else:
+        tid = resolve_tenant_id()
+    with get_session() as s:
+        if s.query(Tenant).filter(Tenant.id == tid).first() is None:
+            raise HTTPException(status_code=400, detail="tenant_id 不存在")
+        if s.query(Department).filter(Department.code == code).first():
+            raise HTTPException(status_code=409, detail="科室 code 已存在")
+        d = Department(code=code, name=name, description=desc, tenant_id=tid)
+        s.add(d)
+        s.flush()
+        did = d.id
+        s.commit()
+    return {"ok": True, "id": did, "code": code, "name": name, "tenant_id": tid}
+
+
 @app.post("/api/knowledge")
 async def save_knowledge(req: Request):
     """保存/覆盖一条企业知识到向量库（供 RAG 检索）。需 X-Admin-Key。
@@ -825,7 +907,11 @@ async def logout(req: Request, user: dict = Depends(get_current_user)):
 
 # ---------------- 会话（患者） ----------------
 @app.post("/api/chat")
-async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
+async def chat(
+    req: ChatRequest,
+    user: dict = Depends(get_current_user),
+    _: None = Depends(require_tenant_context),
+):
     message = req.message
     # 会话线程 ID 由服务端派生（内嵌 role:sub），杜绝跨患者会话越权
     thread_id = _owned_thread_id(user, req.thread_id)
@@ -929,6 +1015,7 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
     input_state = {
         "messages": [HumanMessage(content=message)],
         "patient_id": sub,
+        "tenant_id": resolve_tenant_id(),
     }
 
     async def _gen_impl():
@@ -1488,25 +1575,41 @@ def _count_pending_approvals() -> Optional[int]:
 
 # ---------------- 业务数据只读端点（患者端真实数据展示） ----------------
 @app.get("/api/departments")
-async def departments():
-    """科室主数据（用于智能分诊导航）。"""
+async def departments(tenant: Optional[int] = None, _: None = Depends(require_tenant_context)):
+    """科室主数据（按租户隔离，用于智能分诊导航）。?tenant= 可显式覆盖。"""
+    tid = resolve_tenant_id(tenant)
     with get_session() as s:
-        rows = s.query(Department).order_by(Department.id).all()
-        return [{"code": d.code, "name": d.name, "description": d.description} for d in rows]
+        rows = s.query(Department).filter(Department.tenant_id == tid).order_by(Department.id).all()
+        return [
+            {
+                "code": d.code,
+                "name": d.name,
+                "description": d.description,
+                "tenant_id": d.tenant_id,
+            }
+            for d in rows
+        ]
 
 
 @app.get("/api/appointments/available")
-async def available(department: str = "", date: str = "", user: dict = Depends(get_current_user)):
+async def available(
+    department: str = "",
+    date: str = "",
+    tenant: Optional[int] = None,
+    user: dict = Depends(get_current_user),
+    _: None = Depends(require_tenant_context),
+):
     """今日可约号源（真实排班数据）。可传 department 过滤；不传返回全部科室。"""
     from datetime import date as _d
 
     target = date or _d.today().isoformat()
+    tid = resolve_tenant_id(tenant)
     with get_session() as s:
         q = (
             s.query(DoctorSchedule)
             .join(Doctor)
             .join(Department)
-            .filter(DoctorSchedule.work_date == target)
+            .filter(DoctorSchedule.work_date == target, Department.tenant_id == tid)
         )
         if department:
             q = q.filter(Department.name == department)
@@ -1534,17 +1637,23 @@ async def available(department: str = "", date: str = "", user: dict = Depends(g
 
 
 @app.get("/api/admin/schedules")
-async def list_schedules(date: str = "", user: dict = Depends(require_doctor)):
+async def list_schedules(
+    date: str = "",
+    tenant: Optional[int] = None,
+    user: dict = Depends(require_doctor),
+    _: None = Depends(require_tenant_context),
+):
     """获取全部排班（含 ID，供医护编辑名额）。可传 date 过滤，默认今天。"""
     from datetime import date as _d
 
     target = date or _d.today().isoformat()
+    tid = resolve_tenant_id(tenant)
     with get_session() as s:
         q = (
             s.query(DoctorSchedule)
             .join(Doctor)
             .join(Department)
-            .filter(DoctorSchedule.work_date >= target)  # 含当天及以后
+            .filter(DoctorSchedule.work_date >= target, Department.tenant_id == tid)
         )
         if date:
             q = q.filter(DoctorSchedule.work_date == date)
@@ -1944,6 +2053,20 @@ async def reminders(user: dict = Depends(get_current_user)):
 
 # ---------------- 前端静态托管（同源，供浏览器演示） ----------------
 CLIENT_DIR = Path(__file__).resolve().parent.parent / "client"
+DIST_DIR = CLIENT_DIR / "dist"
+# 是否使用 Vite 构建产物：dist 存在则优先 serving 构建产物，否则回退源码（未构建的开发态）。
+USE_DIST = DIST_DIR.exists()
+
+
+def _client_html(name: str) -> Path:
+    """解析前端页面文件：优先 dist 构建产物，回退 client 源码。"""
+    dist = DIST_DIR / name
+    if USE_DIST and dist.exists():
+        return dist
+    src = CLIENT_DIR / name
+    if not src.exists():
+        raise HTTPException(status_code=404, detail="page not found")
+    return src
 
 
 def _serve_html(request: Request, name: str):
@@ -1952,10 +2075,10 @@ def _serve_html(request: Request, name: str):
     严格 CSP（``script-src 'self' 'nonce-xxx'``）要求内联脚本携带 nonce，
     而静态 FileResponse 无法动态改写内容，故在此读取后注入再返回。
     页面名固定为字面量，不接受用户输入，无路径穿越风险。
+    构建产物中的入口脚本为同源 ``<script type="module" src="/assets/...">``，
+    已被 ``'self'`` 放行，无需 nonce（仅内联 ``<script>`` 需要）。
     """
-    path = CLIENT_DIR / name
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="page not found")
+    path = _client_html(name)
     html = path.read_text(encoding="utf-8")
     nonce = getattr(request.state, "csp_nonce", "")
     if nonce:
@@ -1971,3 +2094,11 @@ async def index(request: Request):
 @app.get("/review")
 async def review_page(request: Request):
     return _serve_html(request, "review.html")
+
+
+# 前端静态资源挂载：构建后由 /assets 提供打包产物；未构建时挂载 /src 以支持源码直跑（本地开发）。
+# 二者互斥：生产部署总是先 `npm run build`，故只挂载 /assets。
+if USE_DIST and (DIST_DIR / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=str(DIST_DIR / "assets")), name="assets")
+elif not USE_DIST and (CLIENT_DIR / "src").exists():
+    app.mount("/src", StaticFiles(directory=str(CLIENT_DIR / "src")), name="src")

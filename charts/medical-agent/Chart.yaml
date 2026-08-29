@@ -1,0 +1,19 @@
+apiVersion: v2
+name: medical-agent
+description: |
+  医疗诊疗 Agent（LangGraph 中枢辐射 + HITL 审批）的 Kubernetes 部署包。
+  设计要点：密钥与配置分离（Secret / ConfigMap），启动时强校验（缺失即拒绝
+  启动，对应 docker-compose 的 ${VAR:?} 约定），非 root 运行 + 只读根文件系统。
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - medical
+  - agent
+  - langgraph
+  - hitl
+home: https://github.com/example/medical-agent
+sources:
+  - https://github.com/example/medical-agent
+maintainers:
+  - name: platform-team

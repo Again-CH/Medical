@@ -20,7 +20,7 @@ from langgraph.types import interrupt
 
 from .compose import try_format_knowledge_reply
 from .config import LLM_MODEL_NAME
-from .context import patient_ctx, thread_ctx
+from .context import patient_ctx, tenant_ctx, thread_ctx
 from .cost import record_llm_tokens
 from .db import clear_pending, is_db_enabled, pop_pending, set_pending
 from .llm import FakeLLM, acompose, get_llm
@@ -365,6 +365,11 @@ def _make_agent_node(intent: str):
         tools = NAMESPACES[intent]
         # 把请求级上下文写入 contextvars，供 DbHub 关联真实患者（不改工具签名）
         patient_ctx.set(state.get("patient_id") or "anonymous")
+        # 多租户上下文：从 graph state 取租户（已由网关解析），确保经 LangGraph
+        # ToolNode（可能跨任务执行）后仍能在工具内正确隔离科室主数据
+        _tid = state.get("tenant_id")
+        if _tid is not None:
+            tenant_ctx.set(_tid)
         # 真实会话线程 ID（LangGraph 通过 config 传入），用于 HITL 待审批缓存的 key
         tid = ""
         if config:

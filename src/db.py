@@ -84,12 +84,29 @@ class Doctor(Base):
     dept_id = mapped_column(Integer, ForeignKey("departments.id"))
 
 
+class Tenant(Base):
+    """多院区 / 租户注册表。departments 与 symptom_dept_map 均按 tenant_id 隔离。
+
+    设计取舍（见 docs/MULTI_TENANT.md）：本期把租户维度落在「科室主数据」这一层
+    （即用户明确要求 ``departments 加 tenant 维度``），并通过 X-Tenant-Id 头 / 上下文
+    变量做租户解析。appointments / doctors 等其余表暂不挂 tenant_id，扩展路径同此模式。
+    """
+
+    __tablename__ = "tenants"
+    id = mapped_column(Integer, primary_key=True)
+    code = mapped_column(String(32), unique=True, nullable=False)
+    name = mapped_column(String(64), nullable=False)
+    is_default = mapped_column(Boolean, default=False, nullable=False)
+    created_at = mapped_column(DateTime, default=utcnow)
+
+
 class Department(Base):
     __tablename__ = "departments"
     id = mapped_column(Integer, primary_key=True)
     code = mapped_column(String(32), unique=True, nullable=False)
     name = mapped_column(String(64), nullable=False)
     description = mapped_column(Text)
+    tenant_id = mapped_column(Integer, ForeignKey("tenants.id"), nullable=False)
 
 
 class SymptomDeptMap(Base):
@@ -98,6 +115,7 @@ class SymptomDeptMap(Base):
     keyword = mapped_column(String(64), nullable=False, index=True)
     dept_id = mapped_column(Integer, ForeignKey("departments.id"), nullable=False)
     weight = mapped_column(Integer, default=1)
+    tenant_id = mapped_column(Integer, ForeignKey("tenants.id"), nullable=False)
 
 
 class DoctorSchedule(Base):

@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "medical-agent.fullname" . }}
+  labels:
+    {{- include "medical-agent.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "medical-agent.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "medical-agent.selectorLabels" . | nindent 8 }}
+      annotations:
+        # 滚动重启时拉取最新 Secret（密钥轮转）
+        checksum/secrets: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      containers:
+        - name: app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          # ---- 配置（非密，来自 ConfigMap）+ 密钥（来自 Secret）----
+          # 密钥缺失即 Pod 起不来（envFrom 引用不存在的 Secret →
+          # CreateContainerConfigError），平移 docker-compose 的 ${VAR:?}
+          # 「缺失即失败」强约束，杜绝弱口令进生产。
+          envFrom:
+            - configMapRef:
+                name: {{ include "medical-agent.fullname" . }}-config
+            - secretRef:
+                name: {{ include "medical-agent.secretName" . }}
+          # LLM 走本地 Ollama 时，容器内通过 host.docker.internal 访问宿主机；
+          # 纯 K8s 节点上应改为 Service 名或 NodePort，此处保留 compose 语义。
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          # 只读根文件系统：仅 /app/data 可写（患者私有库与运行时产物）
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+      volumes:
+        - name: data
+          emptyDir: {}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

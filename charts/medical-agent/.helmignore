@@ -1,0 +1,9 @@
+# 打包时排除（与 .gitignore 类似）
+.git/
+.gitignore
+*.tmpl
+*.orig
+*.bak
+secrets.example.yaml
+README.md
+Dockerfile

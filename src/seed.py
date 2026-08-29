@@ -17,6 +17,7 @@ from .db import (
     LabReport,
     Reminder,
     SymptomDeptMap,
+    Tenant,
     User,
     VitalSign,
     ensure_patient_db,
@@ -25,6 +26,7 @@ from .db import (
     is_db_enabled,
     resolve_exam_location,
 )
+from .tenant import DEFAULT_TENANT_CODE, DEFAULT_TENANT_NAME
 
 # 科室主数据（code, name, description）
 DEPARTMENTS = [
@@ -120,12 +122,20 @@ def seed_all() -> None:
         return
     today = date.today().isoformat()
     with get_session() as s:
+        # 默认租户（多院区隔离的兜底归属，所有历史数据归于此）
+        tenant = s.query(Tenant).filter(Tenant.code == DEFAULT_TENANT_CODE).first()
+        if not tenant:
+            tenant = Tenant(code=DEFAULT_TENANT_CODE, name=DEFAULT_TENANT_NAME, is_default=True)
+            s.add(tenant)
+            s.flush()
+        default_tid = tenant.id
+
         # 科室
         dept_id = {}
         for code, name, desc in DEPARTMENTS:
             d = s.query(Department).filter(Department.code == code).first()
             if not d:
-                d = Department(code=code, name=name, description=desc)
+                d = Department(code=code, name=name, description=desc, tenant_id=default_tid)
                 s.add(d)
                 s.flush()
             dept_id[code] = d.id
@@ -138,7 +148,11 @@ def seed_all() -> None:
                 .first()
             )
             if not exists:
-                s.add(SymptomDeptMap(keyword=kw, dept_id=dept_id[code], weight=1))
+                s.add(
+                    SymptomDeptMap(
+                        keyword=kw, dept_id=dept_id[code], weight=1, tenant_id=default_tid
+                    )
+                )
 
         # 医生
         doc_id = {}

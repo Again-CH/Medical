@@ -1,0 +1,92 @@
+# ============================================================================
+# medical-agent Helm values
+#
+# 安全约定（与 docker-compose.yml 一致）：所有密钥 / 凭据一律无默认值，
+# 缺失即 Pod 起不来（envFrom 引用不存在的 Secret → CreateContainerConfigError）。
+# 因此 secrets 默认不提交任何明文，必须由外部 Secret 提供（见 secrets.example.yaml
+# 与 scripts/gen-secrets.sh，或直接用 SealedSecrets / External Secrets Operator）。
+# ============================================================================
+
+replicaCount: 1
+
+image:
+  repository: medical-agent
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# ---- 非敏感配置（进 ConfigMap，可随镜像提交）----
+config:
+  appEnv: production
+  llmMode: ollama
+  ollamaBaseUrl: http://host.docker.internal:11434
+  ollamaModel: qwen2.5:1.5b
+  llmEgressPolicy: strict          # PHI 不出域：仅允许本地/私有化 LLM 端点
+  authFailMode: fail_closed        # 鉴权依赖不可用时拒绝（绝不放行）
+  trustProxy: "true"
+  cspStrict: "true"
+  # 生产必须显式配置前端域名（逗号分隔），置空则 strict 下收紧为空
+  corsOrigins: ""
+
+# ---- 敏感配置（进 Secret，绝不随镜像提交明文）----
+secrets:
+  # 指向已存在的 Secret（推荐：SealedSecrets / External Secrets 提供）。
+  # 该 Secret 必须含键：database-url, jwt-secret, admin-api-key, cors-origins
+  existingSecret: ""
+  # 仅非生产 / demo：true 时按下方 data 生成 Secret。
+  # 警告：提交前务必清空 data，否则密钥会进 Git 历史。
+  create: false
+  data:
+    databaseUrl: ""
+    jwtSecret: ""
+    adminApiKey: ""
+    corsOrigins: ""
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: false
+  className: nginx
+  host: medical-agent.example.com
+  # 生产应配 TLS；示例留空，按需填写
+  tls: []
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+
+# 非 root + 只读根文件系统；可写目录（/app/data）单独挂 emptyDir
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# ---- 可选：随 chart 部署的 Postgres（demo 用）----
+# 生产请用托管 RDS/PolarDB，并通过 secrets.data.database-url 接入，
+# 同时把 postgresql.enabled 置为 false。
+postgresql:
+  enabled: false
+  image: postgres:16-alpine
+  auth:
+    username: med_user
+    database: med_agent
+    # 密码走独立 Secret（<release>-postgresql-secret），由 gen-secrets.sh 或
+    # External Secrets 提供，键为 postgres-password；缺失即模板化失败
+    password: ""
+  persistentVolume:
+    size: 8Gi

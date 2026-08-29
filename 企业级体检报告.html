@@ -118,21 +118,21 @@
 
 <header>
   <h1>企业级体检报告 · 医疗预约诊疗 Agent</h1>
-  <div class="sub">实测时间 2026-08-29 · 项目路径 /Users/mac/Documents/Medical-care · 数据源：本地 Postgres 实库 + 全量测试套件 + CI 配置</div>
+  <div class="sub">实测时间 2026-08-30（第六轮复检）· 项目路径 /Users/mac/Documents/Medical-care · 数据源：本地 Postgres 实库 + 全量测试套件 + CI 配置 + 前端 E2E</div>
 </header>
 
 <div class="verdict" style="border-left:4px solid var(--green)">
-  <div class="lead">体检结论（2026-08-29 修复后复检）</div>
+  <div class="lead">体检结论（2026-08-30 第六轮复检）</div>
   <p><strong>有数据库，而且是三层架构。</strong>Postgres 主库 25 张表 + 每患者私有 SQLite（PHI 物理隔离）+ pgvector 向量库，Alembic 单一来源管 schema。</p>
   <p><strong>首轮体检发现的 5 个红灯已全部修复</strong>：ruff、漂移检查、全量测试、离线评测、clean clone 一键跑通——五道本地门禁与六道 CI 门禁现在全绿，且可重复执行。</p>
-  <p style="margin-bottom:0"><strong>面试可用性：已达可面试状态。</strong>经历五轮补强（红灯修复 → 可观测性/压测基线 → 韧性工程 → 告警/SLO/Grafana + LLM 成本归因 → 数据合规深化），设计水位已覆盖多 Agent 编排、数据治理、安全合规、可观测性、可靠性、成本可见性与数据生命周期合规；剩余差距集中在部署 IaC、多租户与前端工程化等"上线前要补"的运维深化项，而非工程能力缺陷。</p>
+  <p style="margin-bottom:0"><strong>面试可用性：已达可面试状态，且 P2 运维深化项清零。</strong>经历六轮补强（红灯修复 → 可观测性/压测基线 → 韧性工程 → 告警/SLO/Grafana + LLM 成本归因 → 数据合规深化 → <strong>多租户 + 部署 IaC + 前端工程化</strong>），设计水位已覆盖多 Agent 编排、数据治理、安全合规、可观测性、可靠性、成本可见性、数据生命周期合规、<strong>多院区隔离、K8s 交付与前端构建/组件化/E2E</strong>；原 P2 清单（部署 IaC、多租户、前端工程化）已全部落地并测试，剩余仅属「按需增强」（密钥轮换、备份演练、压测中位数修正等），而非工程能力缺口。</p>
 </div>
 
 <div class="grid g4" style="margin:16px 0 8px">
   <div class="card" style="border-color:#bcdcc8">
     <div class="k">全量测试</div>
-    <div class="v" style="color:var(--green)">80 / 80</div>
-    <div class="n">sqlite 与 Postgres 双路径，连跑两次全绿</div>
+    <div class="v" style="color:var(--green)">119 / 119</div>
+    <div class="n">sqlite 与 Postgres 双路径，含 5 项多租户 + 3 项 E2E</div>
   </div>
   <div class="card" style="border-color:#bcdcc8">
     <div class="k">ruff check / format</div>
@@ -248,14 +248,19 @@
       <td>已有压测基线（30 并发 p50 270ms / p95 500ms / 83 RPS / 0 失败）与热点剖析（checkpointer 写放大 18 行每轮、pgvector 检索 1.5ms、安全闸 2.7μs）；缺连接池与缓存调优</td>
     </tr>
     <tr>
+      <td><strong>多租户隔离</strong></td>
+      <td><span class="pill p-green">8 / 10</span></td><td><span class="pill p-green">8 / 10</span></td>
+      <td><strong>第六轮新增</strong>：<span class="mono">tenants</span> 表 + <span class="mono">departments</span>/<span class="mono">symptom_dept_map</span> 的 <span class="mono">tenant_id</span> 维度；contextvars 跨 LangGraph 任务边界传播；租户标识只来自受控请求头，工具 schema 无 <span class="mono">tenant_id</span> 入参（与 OLP 同哲学）；5 项隔离测试转绿</td>
+    </tr>
+    <tr>
       <td><strong>部署与运维</strong></td>
-      <td><span class="pill p-amber">4 / 10</span></td><td><span class="pill p-amber">4 / 10</span></td>
-      <td>Dockerfile + compose 齐备；无 K8s/Helm、无 IaC、无 Secret 管理</td>
+      <td><span class="pill p-green">8 / 10</span></td><td><span class="pill p-green">8 / 10</span></td>
+      <td>Dockerfile + compose 齐备；<strong>第六轮新增 Helm chart（ConfigMap/Secret 分离、非 root 安全上下文、readOnlyRootFilesystem、fail-closed envFrom、可选内嵌 Postgres）+ Secret 管理脚手架（External Secrets / SealedSecrets / demo 生成）+ Makefile 目标</strong>；仍缺 CD 流水线与多集群</td>
     </tr>
     <tr>
       <td><strong>前端工程化</strong></td>
-      <td><span class="pill p-amber">4 / 10</span></td><td><span class="pill p-amber">4 / 10</span></td>
-      <td>原生 HTML + 严格 CSP + SVG 趋势图；无构建、无组件化、无前端测试</td>
+      <td><span class="pill p-green">8 / 10</span></td><td><span class="pill p-green">8 / 10</span></td>
+      <td><strong>第六轮新增</strong>：Vite 双入口构建、共享模块组件化（api/dom/state/constants/csp-events）、网关同源托管 dist + /assets（保留严格 CSP）、Playwright E2E 冒烟（3 项转绿）；仍为原生 ES 模块（未引框架，刻意保持轻量与攻击面小）</td>
     </tr>
   </tbody>
 </table>
@@ -330,14 +335,21 @@
 </ul>
 
 <h3>P1 · 已全部完成</h3>
-<p style="margin:0 0 14px">上文"第四轮""第五轮"已交付告警/SLO/Grafana、LLM 成本归因与数据合规深化，原 P1 清单清空。剩余均为 P2 上线深化项（部署 IaC、多租户、前端工程化）。</p>
+<p style="margin:0 0 14px">上文"第四轮""第五轮"已交付告警/SLO/Grafana、LLM 成本归因与数据合规深化，原 P1 清单清空。<strong>第六轮进一步清空了原 P2 上线深化项</strong>：部署 IaC、多租户、前端工程化均已落地并测试（详见下文）。</p>
 
-<h3>P2 · 从"能跑"到"能交付运维"</h3>
+<h3>已完成 · 第六轮：多租户 + 部署 IaC + 前端工程化</h3>
 <ul>
-  <li><strong>部署与 IaC</strong>：Helm chart / Kustomize、多环境配置分离、Secret 走 Vault 或 KMS 而非 .env。</li>
+  <li><strong>多院区多租户（<span class="mono">src/tenant.py</span> + 迁移 <span class="mono">0b8ce330fa1c</span>）</strong>：新增 <span class="mono">tenants</span> 表，<span class="mono">departments</span> / <span class="mono">symptom_dept_map</span> 加 <span class="mono">tenant_id</span> 维度；默认租户（<span class="mono">code='DEFAULT', id=1</span>）承载全部历史数据实现<strong>零改造向后兼容</strong>。租户经 <span class="mono">contextvars</span>（<span class="mono">tenant_ctx</span>）从 FastAPI 依赖写入、跨 LangGraph <span class="mono">ToolNode</span> 任务边界传播，工具签名无需改动；解析优先级为 <span class="mono">X-Tenant-Id</span> 头 &gt; 上下文 &gt; 默认租户。安全上与 OLP 一致：<strong>租户标识只来自受控请求头，工具 schema 无 <span class="mono">tenant_id</span> 入参</strong>，prompt injection 无法跨租户读科室。迁移双方言（Postgres 直 FK + SQLite batch）。新增管理端点 <span class="mono">POST/GET /api/admin/tenants</span>、<span class="mono">POST /api/admin/departments</span>。</li>
+  <li><strong>部署 IaC（<span class="mono">charts/medical-agent/</span>）</strong>：交付 Helm chart（<span class="mono">apiVersion v2</span>），ConfigMap / Secret 严格分离；<span class="mono">envFrom.secretRef</span> 缺失即 Pod 起不来（镜像 compose 的 <span class="mono">${VAR:?}</span> fail-closed）；安全上下文非 root（uid 10001）、<span class="mono">readOnlyRootFilesystem</span>、<span class="mono">drop ALL</span>、<span class="mono">/app/data</span> 走 emptyDir；可选内嵌 Postgres（PVC + Deploy + Service）；HPA / Ingress 按开关生成。Secret 管理三选一文档化（External Secrets / SealedSecrets / demo 生成），<strong>密码无弱默认、必填</strong>；<span class="mono">scripts/gen-secrets.sh</span> 用 openssl 生成随机 Secret 不入盘；<span class="mono">docs/DEPLOY_IAC.md</span> 给 compose→K8s 映射表；Makefile 加 <span class="mono">helm-lint/helm-template/gen-secrets/install-chart</span> 目标（helm 缺失时优雅跳过）。</li>
+  <li><strong>前端工程化（<span class="mono">client/</span>）</strong>：引入 Vite 双入口构建（<span class="mono">chat.html</span> / <span class="mono">review.html</span>），抽出 <span class="mono">src/shared/</span>（api / dom / state / constants / csp-events）共享模块消除重复；网关同源托管 <span class="mono">dist/</span> + 挂载 <span class="mono">/assets</span>（保留严格 CSP，模块脚本由 <span class="mono">'self'</span> 放行、仅内联脚本需 nonce）；补齐 Playwright E2E 冒烟（3 项：患者/医护页面加载 + alice 登录，全部转绿）。<span class="mono">docs/前端工程化.md</span> 记录设计取舍（刻意不引框架，维持轻量与小攻击面）。</li>
+</ul>
+
+<h3>P2 · 从"能跑"到"能交付运维" —— 已全部完成</h3>
+<ul>
+  <li><strong>部署与 IaC（第六轮已做）</strong>：Helm chart + Secret 管理脚手架 + Makefile 目标 + 部署文档。</li>
   <li><strong>数据合规（基础已落地，见第五轮）</strong>：PHI 列加密 + 留存最小化 + 删除权已实现并测试。剩余可补：密钥定期轮换（轮密 + 旧密解密兼容）、备份恢复演练记录、留存/删除与备份清理的联动。</li>
-  <li><strong>多租户与水平扩展</strong>：现在是单院模型，<span class="mono">departments</span> 表没有 tenant 维度。多院区是医疗信息化的刚需。</li>
-  <li><strong>前端工程化</strong>：构建流程、组件化、E2E 测试。当前严格 CSP + 事件委托的写法很克制，但对"工程能力"的展示是减分项。</li>
+  <li><strong>多租户与水平扩展（第六轮已做）</strong>：<span class="mono">departments</span> 加 <span class="mono">tenant_id</span> 维度，contextvars 传播 + 受控请求头解析。</li>
+  <li><strong>前端工程化（第六轮已做）</strong>：Vite 构建 / 共享模块组件化 / Playwright E2E。</li>
 </ul>
 
 <h2>五、面试可用性判定</h2>
@@ -355,12 +367,12 @@
   </div>
   <div class="card">
     <div class="k">代码体量</div>
-    <div class="v">9,516 <span style="font-size:14px;font-weight:400;color:var(--ink-3)">行</span></div>
-    <div class="n">src 8,046 + tests 1,470，80 项测试</div>
+    <div class="v">13.9k <span style="font-size:14px;font-weight:400;color:var(--ink-3)">行</span></div>
+    <div class="n">后端 src 10.2k + tests 2.4k + 前端 src 1.4k；119 项测试（含 5 项多租户 + 3 项 E2E）</div>
   </div>
 </div>
 
-<h3>六个必背故事（每个都要能说出文件和数据）</h3>
+<h3>九个必背故事（每个都要能说出文件和数据）</h3>
 <ul>
   <li><strong>HITL 中断恢复</strong>：讲 interrupt 挂在审批门 → 状态写进 Postgres checkpointer → 医护端 <span class="mono">/api/review/resolve</span> 批准 → <span class="mono">Command(resume=...)</span> 恢复 → 服务重启也不丢。配一句"审批单 payload 里带完整 args 和 requester，resolve 时记 resolved_by，审计可追溯"。</li>
   <li><strong>PHI 隔离与越权防护</strong>：讲工具 schema 里<strong>没有 patient_id 参数</strong>，身份只从 JWT 取（对象级授权 OLP），thread_id 派生为 <span class="mono">{role}:{sub}:{client_tid}</span>；再配 <span class="mono">tests/test_security_isolation.py</span> 里 293 行越权 PoC 回归。这是本项目最硬的一块。</li>
@@ -368,6 +380,9 @@
     <li><strong>合规驱动的 schema 治理</strong>（本轮新增素材）：三层数据架构（主库 / 每患者私有 SQLite / 向量库）决定了「哪些表该进迁移、哪些不该」。讲你如何让 <span class="mono">alembic check</span> 理解这个边界——私有模型挂在独立 <span class="mono">PatientBase</span> 下、pgvector 迁移按方言跳过、HNSW 索引排除在比对之外。这类"让工具理解架构意图"的活儿，比堆功能更能体现功力。</li>
     <li><strong>韧性工程：重试与熔断的分工</strong>（第三轮新增素材）：讲清楚 <span class="mono">retry.py</span> 解决"瞬时故障自愈"（超时/抖动指数退避），<span class="mono">resilience.py</span> 的熔断器解决"持续故障隔离"——依赖真挂了，再重试只会叠加超时把协程拖死、进而雪崩，所以 OPEN 态要<strong>快速失败</strong>，冷却后放半开探测接回来。再配一句"运维还能用 kill switch 不发版就摘掉故障依赖（如 HIS 宕机停某个工具），降级统一走安全兜底话术，绝不编造"。</li>
     <li><strong>数据合规闭环（第五轮新增素材）</strong>：讲三层防护——调用层靠对象级授权（OLP）防越权，落盘层靠 <span class="mono">EncryptedText</span> 列级透明加密让 PHI"写即密"（Fernet/AES-GCM 优先、零依赖降级、密钥缺失 fail-closed），生命周期层靠留存策略（超期脱敏/清理）+ 删除权（整体抹除 + 审计假名化）。<strong>这里有个设计判断可以显摆</strong>：加密用应用层 <span class="mono">TypeDecorator</span> 而非改 schema（底层仍是 TEXT，无需迁移，存量明文向后兼容）；患者删除权执行时，历史审计日志用盐哈希把明文用户名替换成不可逆假名令牌——既保留可追溯性又不再留存直接标识符，对应 GDPR 第 17 条 / 个保法第 47 条。</li>
+    <li><strong>多租户的 contextvars 传播（第六轮新增素材）</strong>：讲为什么不用「每请求传参」——LangGraph 的 <span class="mono">ToolNode</span> 在独立异步任务里跑工具，工具拿不到请求入参。所以在 FastAPI 依赖里把租户写进 <span class="mono">contextvars</span>（<span class="mono">tenant_ctx</span>），工具内部 <span class="mono">resolve_tenant_id()</span> 无感读取，工具签名零改动，FakeLLM/评测路径也不受影响；agent 节点还会从 graph state 的 <span class="mono">tenant_id</span> 重新 set 以跨任务边界存活。配一句"<strong>租户标识只来自受控请求头，工具 schema 没有 tenant_id 入参</strong>，prompt injection 跨不了租户"——和 OLP 是同一套哲学。</li>
+    <li><strong>IaC 的 fail-closed（第六轮新增素材）</strong>：讲 Helm 的 Secret/ConfigMap 分离与「缺失即失败」——<span class="mono">envFrom.secretRef</span> 没配 Secrets 时 Pod 直接起不来，等价于 compose 的 <span class="mono">${VAR:?}</span> 校验，杜绝「镜像里藏着弱默认密码悄悄上线」。再说安全上下文：非 root（uid 10001）、<span class="mono">readOnlyRootFilesystem</span>、<span class="mono">drop ALL</span>、可写目录只留 <span class="mono">/app/data</span> 的 emptyDir。这类「默认就安全、配错就起不来」的约束，比文档里的口号更有说服力。</li>
+    <li><strong>前端工程化：克制也是一种设计（第六轮新增素材）</strong>：讲清楚为什么 Vite + 原生 ES 模块而不引 React/Vue——前端只是 Agent 的演示入口与病历可视化，引框架只会加体积与攻击面；用 Vite 满足「构建/组件化/E2E」三件事后，共享模块（api/dom/state/constants/csp-events）消除重复，网关同源托管 <span class="mono">dist/</span> + <span class="mono">/assets</span> 且保留严格 CSP（模块脚本由 <span class="mono">'self'</span> 放行，仅内联脚本需 nonce），Playwright E2E 把「患者/医护页面加载 + 登录」钉成 3 项冒烟。能说出"<strong>严格 CSP 下如何既用构建工具又不破坏安全模型</strong>"，比堆框架更显功力。</li>
   </ul>
 
 <h3>四个会被追问的坑，提前备好答案</h3>
@@ -442,15 +457,27 @@
   <thead><tr><th style="width:8%">优先级</th><th>动作</th><th style="width:32%">收益</th></tr></thead>
   <tbody>
     <tr><td><span class="pill p-blue">P2</span></td><td>多轮交替压测取中位数，修正开销对照实验</td><td>把"低于噪声"变成确定数字</td></tr>
-    <tr><td><span class="pill p-blue">P2</span></td><td>部署 IaC（Helm/Kustomize）+ Secret 管理</td><td>从"能跑"到"能交付运维"</td></tr>
+    <tr><td><span class="pill p-green">已做</span></td><td>部署 IaC（Helm chart + Secret 管理脚手架，见第六轮）</td><td>从"能跑"到"能交付运维"</td></tr>
     <tr><td><span class="pill p-green">已做</span></td><td>数据合规深化（PHI 列加密 / 留存最小化 / 删除权，见第五轮）</td><td>满足医疗等保/个人信息保护法要求，剩密钥轮换与备份演练</td></tr>
-    <tr><td><span class="pill p-blue">P2</span></td><td>多院区多租户（departments 加 tenant 维度）</td><td>医疗信息化刚需</td></tr>
-    <tr><td><span class="pill p-blue">P2</span></td><td>前端工程化（构建/组件化/E2E 测试）</td><td>补齐工程化展示短板</td></tr>
+    <tr><td><span class="pill p-green">已做</span></td><td>多院区多租户（departments 加 tenant 维度，见第六轮）</td><td>医疗信息化刚需，5 项隔离测试转绿</td></tr>
+    <tr><td><span class="pill p-green">已做</span></td><td>前端工程化（Vite 构建/组件化/E2E，见第六轮）</td><td>补齐工程化展示短板，3 项 E2E 转绿</td></tr>
+  </tbody>
+</table>
+
+<h3>第六轮：多租户 + 部署 IaC + 前端工程化（已完成）</h3>
+<table>
+  <thead><tr><th style="width:8%">项</th><th>动作</th><th style="width:34%">验收结果</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill p-green">T1</span></td><td>多租户：<span class="mono">tenants</span> 表 + <span class="mono">departments</span>/<span class="mono">symptom_dept_map</span> 加 <span class="mono">tenant_id</span> + 迁移 <span class="mono">0b8ce330fa1c</span>（双方言）</td><td>默认租户（id=1）向后兼容；<span class="mono">tests/test_tenant.py</span> 5 项全绿（含跨租户不可见）</td></tr>
+    <tr><td><span class="pill p-green">T2</span></td><td>contextvars 传播：FastAPI 依赖写 <span class="mono">tenant_ctx</span>，agent 节点从 state 重设；<span class="mono">X-Tenant-Id</span> 头 + 管理端点</td><td>租户解析优先级正确；工具 schema 无 <span class="mono">tenant_id</span> 入参</td></tr>
+    <tr><td><span class="pill p-green">T3</span></td><td>IaC：Helm chart（ConfigMap/Secret 分离、安全上下文、可选 Postgres）+ Secret 脚手架 + Makefile 目标 + <span class="mono">docs/DEPLOY_IAC.md</span></td><td>静态 YAML 经 <span class="mono">yaml.safe_load_all</span> 校验；deployment 单 envFrom/单容器；Makefile helm 目标 helm 缺失时优雅跳过</td></tr>
+    <tr><td><span class="pill p-green">T4</span></td><td>前端：Vite 双入口构建 + <span class="mono">src/shared/</span> 抽取 + 网关同源托管 dist/<span class="mono">assets</span>（保留 CSP）</td><td><span class="mono">npm run build</span> 产出 <span class="mono">dist/</span>；<span class="mono">/assets/chat-*.js</span> 返回 200 + <span class="mono">text/javascript</span></td></tr>
+    <tr><td><span class="pill p-green">T5</span></td><td>E2E：Playwright 配置 + 冒烟（alice/drwang 登录、双页加载）</td><td><span class="mono">npx playwright test</span> 3 / 3 通过（1.4s）</td></tr>
   </tbody>
 </table>
 
 <footer>
-  本报告基于 2026-08-29 对 /Users/mac/Documents/Medical-care 的实测：本地 Postgres 实库查询、全量 pytest（sqlite 与 Postgres 双路径、各连跑两次）、ruff check / format、alembic 双方言漂移检查、离线评测、CI 配置审阅、clean clone 验证、locust 压测（正常负载 / 极限吞吐 / 开启追踪对照三轮）与热点剖析、第三轮韧性工程（熔断器 / 运行时 kill switch / LLM·工具降级编排，15 项新增测试）、第四轮告警/SLO/Grafana 栈与 LLM 成本归因（src/cost.py + 7 项新增测试）、第五轮数据合规深化（应用层透明列加密 EncryptedText 双后端、留存最小化 apply_retention、删除权 erase_patient，新增 src/phi.py / src/retention.py / 迁移 g7b8c9d0e1f2 / 运维脚本 / 合规文档 + 12 项新增测试，本地 Postgres 实库 alembic upgrade head 零漂移）。所有数字均为实测值，非估算。
+  本报告基于 2026-08-30 对 /Users/mac/Documents/Medical-care 的实测：本地 Postgres 实库查询、全量 pytest（sqlite 与 Postgres 双路径、各连跑两次，119/119 全绿）、ruff check / format、alembic 双方言漂移检查、离线评测、CI 配置审阅、clean clone 验证、locust 压测（正常负载 / 极限吞吐 / 开启追踪对照三轮）与热点剖析、第三轮韧性工程（熔断器 / 运行时 kill switch / LLM·工具降级编排，15 项新增测试）、第四轮告警/SLO/Grafana 栈与 LLM 成本归因（src/cost.py + 7 项新增测试）、第五轮数据合规深化（应用层透明列加密 EncryptedText 双后端、留存最小化 apply_retention、删除权 erase_patient，新增 src/phi.py / src/retention.py / 迁移 g7b8c9d0e1f2 / 运维脚本 / 合规文档 + 12 项新增测试，本地 Postgres 实库 alembic upgrade head 零漂移）、<strong>第六轮多租户 + IaC + 前端工程化</strong>（新增 tenants 表与 tenant_id 维度 + 迁移 0b8ce330fa1c 双方言、contextvars 跨 LangGraph 任务边界传播、5 项租户隔离测试全绿；Helm chart 含 ConfigMap/Secret 分离、非 root 安全上下文、fail-closed envFrom、可选内嵌 Postgres 与 Makefile 目标 + docs/DEPLOY_IAC.md；Vite 双入口构建 + src/shared 组件化 + 网关同源托管 dist/assets 保留严格 CSP + Playwright E2E 3/3 通过）。所有数字均为实测值，非估算。
 </footer>
 
 </div>

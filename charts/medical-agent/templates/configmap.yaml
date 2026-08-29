@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "medical-agent.fullname" . }}-config
+  labels:
+    {{- include "medical-agent.labels" . | nindent 4 }}
+data:
+  APP_ENV: {{ .Values.config.appEnv | quote }}
+  LLM_MODE: {{ .Values.config.llmMode | quote }}
+  OLLAMA_BASE_URL: {{ .Values.config.ollamaBaseUrl | quote }}
+  OLLAMA_MODEL: {{ .Values.config.ollamaModel | quote }}
+  LLM_EGRESS_POLICY: {{ .Values.config.llmEgressPolicy | quote }}
+  AUTH_FAIL_MODE: {{ .Values.config.authFailMode | quote }}
+  TRUST_PROXY: {{ .Values.config.trustProxy | quote }}
+  CSP_STRICT: {{ .Values.config.cspStrict | quote }}
+  CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
+  # 数据库主机/库名等非密信息；真正口令在 Secret（database-url 含完整连接串）
+  POSTGRES_USER: {{ .Values.postgresql.auth.username | quote }}
+  POSTGRES_DB: {{ .Values.postgresql.auth.database | quote }}
