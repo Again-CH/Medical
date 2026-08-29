@@ -28,3 +28,6 @@ medical_agent.db
 # 编辑器
 .idea/
 .vscode/
+
+# WorkBuddy 工作区记忆（本地协作日志，非交付物）
+.workbuddy/

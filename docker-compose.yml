@@ -1,25 +1,37 @@
 # 生产化部署：PostgreSQL 持久化 + 网关服务一键起
+#
+# 安全约定：**所有密钥与凭据一律无默认值**，缺失即启动失败。
+# 用 ${VAR:?提示} 让 compose 在变量缺失时直接报错，杜绝
+# 「change-me-in-prod」这类默认弱口令被带到生产。
+#
 # 用法：
+#   export JWT_SECRET="$(openssl rand -base64 48)"
+#   export POSTGRES_PASSWORD="$(openssl rand -base64 24)"
+#   export ADMIN_API_KEY="$(openssl rand -base64 32)"
 #   docker compose up -d
-#   # 浏览器打开 client/chat.html（患者端）与 client/review.html（医护端）
+#   # 浏览器打开 http://127.0.0.1:8000/（患者端）/ /review（医护端）
 services:
   postgres:
     image: postgres:16-alpine
     container_name: med_agent_pg
     restart: unless-stopped
     environment:
-      POSTGRES_USER: med_user
-      POSTGRES_PASSWORD: med_pass
-      POSTGRES_DB: med_agent
-    ports:
-      - "5432:5432"
+      # 强口令必填，不提供默认值
+      POSTGRES_USER: ${POSTGRES_USER:-med_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请设置 POSTGRES_PASSWORD（openssl rand -base64 24）}
+      POSTGRES_DB: ${POSTGRES_DB:-med_agent}
+    # 不向宿主机暴露端口：数据库仅对 compose 内网可见，避免被直接扫描/爆破
+    expose:
+      - "5432"
     volumes:
       - med_pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U med_user -d med_agent"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-med_user} -d ${POSTGRES_DB:-med_agent}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    security_opt:
+      - no-new-privileges:true
 
   app:
     build: .
@@ -29,12 +41,24 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+psycopg2://med_user:med_pass@postgres:5432/med_agent
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-med_user}:${POSTGRES_PASSWORD:?请设置 POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-med_agent}
+      # 生产模式：开启启动期安全强校验（弱密钥等直接拒绝启动）
+      APP_ENV: ${APP_ENV:-production}
+      # JWT 密钥必填，且 production 下不足 32 字节会拒绝启动
+      JWT_SECRET: ${JWT_SECRET:?请设置 JWT_SECRET（openssl rand -base64 48）}
+      # CORS 必填白名单（逗号分隔），禁止 "*"
+      CORS_ORIGINS: ${CORS_ORIGINS:?请设置 CORS_ORIGINS，如 https://your-domain.com}
+      # 医护账号开通密钥：未设置时 /admin/doctors 拒绝开通（防自助提权）
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?请设置 ADMIN_API_KEY（openssl rand -base64 32）}
+      # PHI 出境策略：strict 下仅允许本地/私有化端点
+      LLM_EGRESS_POLICY: ${LLM_EGRESS_POLICY:-strict}
       LLM_MODE: ${LLM_MODE:-ollama}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:1.5b}
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-prod}
-      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      # 仅在部署于可信反向代理之后才置 true，否则 X-Forwarded-For 会被伪造绕过限流
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      # 鉴权失败模式：吊销校验不可用时拒绝（fail_closed）
+      AUTH_FAIL_MODE: ${AUTH_FAIL_MODE:-fail_closed}
     ports:
       - "8000:8000"
     healthcheck:
@@ -42,6 +66,10 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
 volumes:
   med_pg_data:

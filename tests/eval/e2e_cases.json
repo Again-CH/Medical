@@ -1,14 +1,24 @@
 [
   {
     "id": "booking_lock_settle",
-    "text": "我要挂神经内科今天的号，请锁定号源并办理医保结算",
+    "text": "我要预约挂号神经内科今天，请锁定号源并办理医保结算",
     "intent": "booking",
     "patient_id": "alice",
     "expect": {
       "interrupt": true,
-      "action": "lock_and_settle",
-      "tools": ["lock_appointment", "medicare_settle"],
+      "action": "medicare_settle",
+      "tools": ["medicare_settle"],
       "after_approve": true
+    }
+  },
+  {
+    "id": "booking_auto_lock",
+    "text": "我要预约呼吸内科今天上午的号，请锁定号源",
+    "intent": "booking",
+    "patient_id": "alice",
+    "expect": {
+      "interrupt": false,
+      "final_contains": "挂号"
     }
   },
   {
@@ -42,23 +52,22 @@
   {
     "id": "emergency_handoff",
     "text": "我突然胸痛呼吸困难快救我",
-    "intent": "emergency",
+    "intent": "triage",
     "patient_id": "alice",
     "expect": {
-      "interrupt": true,
-      "action": "emergency_handoff",
-      "tools": ["handoff", "call_120"]
+      "interrupt": false,
+      "final_contains": "红线"
     }
   },
   {
-    "id": "booking_reject",
-    "text": "我要挂神经内科今天的号，请锁定号源并办理医保结算",
+    "id": "booking_settle_reject",
+    "text": "我要预约挂号神经内科今天，请锁定号源并办理医保结算",
     "intent": "booking",
     "patient_id": "alice",
     "expect": {
       "interrupt": true,
-      "action": "lock_and_settle",
-      "tools": ["lock_appointment", "medicare_settle"],
+      "action": "medicare_settle",
+      "tools": ["medicare_settle"],
       "after_reject": true
     }
   }

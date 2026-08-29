@@ -11,8 +11,14 @@ def query_availability(department: str, date: str = "today") -> str:
 
 @tool
 def lock_appointment(department: str, date: str, slot: str) -> str:
-    """锁定号源（敏感动作，需人工确认）。"""
+    """锁定号源（有名额即自动执行）。"""
     return get_hub().lock_appointment(department, date, slot)
+
+
+@tool
+def confirm_appointment(appointment_id: str = "") -> str:
+    """确认/完成已锁定的号源。appointment_id 为空时自动确认该患者最近一笔 LOCKED 预约。"""
+    return get_hub().confirm_appointment(appointment_id)
 
 
 @tool

@@ -217,8 +217,8 @@
       <text x="148" y="948" font-size="12.5" font-weight="700" text-anchor="middle" fill="#15803d">红线引擎</text>
       <text x="148" y="966" font-size="11" text-anchor="middle">redline.py</text>
       <text x="70" y="992" font-size="10.5">· 急症 / 违规词库</text>
-      <text x="70" y="1012" font-size="10.5">· 命中 → 强制 emergency</text>
-      <text x="70" y="1032" font-size="10.5">  转人工 / 急诊</text>
+      <text x="70" y="1012" font-size="10.5">· 命中 → final_answer 内嵌急症/120 提示</text>
+      <text x="70" y="1032" font-size="10.5">  （不跳过红线，AI 不下诊断）</text>
       <text x="70" y="1056" font-size="10.5">· 合规底线：</text>
       <text x="70" y="1074" font-size="10.5">  AI 不做诊断</text>
 
@@ -274,14 +274,14 @@
 
     <!-- Card D: multi-tenant -->
     <rect x="352" y="1358" width="276" height="110" rx="10" fill="#fff" stroke="#475569"/>
-    <text x="364" y="1380" font-size="12.5" font-weight="700" fill="#334155">多租户隔离</text>
+    <text x="364" y="1380" font-size="12.5" font-weight="700" fill="#334155">多租户隔离（规划中）</text>
     <text x="364" y="1398" font-size="11" fill="#64748b">(tenant scope)</text>
     <text x="364" y="1424" font-size="10.5">· hospital_id / dept_id 维度隔离</text>
     <text x="364" y="1444" font-size="10.5">· checkpointer/store/记忆 按租户分片</text>
     <text x="364" y="1464" font-size="10.5">· RBAC 叠加 tenant 作用域</text>
 
   </svg>
-  <div class="note">★ 标记节点含人工审核门（interrupt）。红线引擎与审计在每次请求中横切生效。模型可切换 fake / ollama / openai / qwen（qwen 私有化满足数据不出域）。④ 工程增强：流式(SSE) / 评测(eval) / 降级(Fallback) / 多租户隔离 已补全。子 Agent 独立工具集已细分为 5 个专属工具组（分诊/挂号/问诊/随访/转诊）。</div>
+  <div class="note">★ 标记节点含人工审核门（interrupt）。红线引擎与审计在每次请求中横切生效。模型可切换 fake / ollama / openai / qwen（qwen 私有化满足数据不出域）。④ 工程增强：流式(SSE) / 评测(eval) / 降级(Fallback) 已落地，多租户隔离(规划中)。子 Agent 独立工具集已细分为 5 个专属工具组（分诊/挂号/问诊/随访/转诊）。</div>
   </div>
 </div>
 </body>

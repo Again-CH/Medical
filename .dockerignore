@@ -1,0 +1,33 @@
+# 密钥与本地配置：绝不进镜像（否则镜像分发 = 密钥与患者数据泄露）
+.env
+.env.*
+*.env
+
+# 患者私有数据库与本地演示库（含 PHI，绝不可打包分发）
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# 版本控制与缓存
+.git
+.gitignore
+.github
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# 本地产物与文档
+eval_report.json
+approvals*.json
+deploy/
+.DS_Store
+.idea/
+.vscode/
+
+# 工作区元数据
+.workbuddy/

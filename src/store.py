@@ -62,7 +62,7 @@ class ApprovalStore:
             self._persist()
         return aid
 
-    def resolve(self, approval_id, decision):
+    def resolve(self, approval_id, decision, actor: str = ""):
         with self._lock:
             rec = self._approvals.get(approval_id)
             if not rec:
@@ -70,7 +70,8 @@ class ApprovalStore:
             rec["status"] = "resolved"
             rec["decision"] = decision
             rec["resolved_at"] = _now()
-            self._audit.append({"action": "resolve", **rec})
+            rec["resolved_by"] = actor
+            self._audit.append({"action": "resolve", "actor": actor, **rec})
             self._persist()
         return rec
 
@@ -136,15 +137,22 @@ class PostgresApprovalStore:
             )
             s.add(
                 AuditLog(
-                    actor=thread_id,
-                    action="create",
+                    # actor 必须是**真实申请人**（患者 username），
+                    # 用 thread_id 顶替会让审计无法回答「谁发起的」
+                    actor=(payload or {}).get("requester") or thread_id,
+                    action="approval_create",
                     detail=json.dumps(payload, ensure_ascii=False),
                 )
             )
             s.commit()
         return aid
 
-    def resolve(self, approval_id, decision):
+    def resolve(self, approval_id, decision, actor: str = ""):
+        """审批落库：记录**审批人身份**（resolved_by / AuditLog.actor）。
+
+        敏感操作（医保结算 / 转诊 / 120 呼叫）必须可追责：
+        事后要能回答「哪一单、被谁、以什么决定批准」。
+        """
         from sqlalchemy.orm import sessionmaker
 
         from .db import Approval, AuditLog
@@ -158,11 +166,14 @@ class PostgresApprovalStore:
             ap.status = "resolved"
             ap.decision = json.dumps(decision, ensure_ascii=False)
             ap.resolved_at = now
+            ap.resolved_by = actor
             s.add(
                 AuditLog(
-                    actor=approval_id,
-                    action="resolve",
-                    detail=json.dumps(decision, ensure_ascii=False),
+                    actor=actor or "unknown",
+                    action="approval_resolve",
+                    detail=json.dumps(
+                        {"approval_id": approval_id, "decision": decision}, ensure_ascii=False
+                    ),
                 )
             )
             s.commit()
@@ -174,6 +185,7 @@ class PostgresApprovalStore:
                 "status": ap.status,
                 "created_at": ap.created_at,
                 "decision": decision,
+                "resolved_by": actor,
             }
 
     def pending(self):
@@ -236,6 +248,7 @@ class PostgresApprovalStore:
                 "status": ap.status,
                 "created_at": ap.created_at,
                 "decision": json.loads(ap.decision) if ap.decision else None,
+                "resolved_by": ap.resolved_by,
             }
 
 

@@ -29,7 +29,7 @@ def test_memory_store_roundtrip():
     assert rec["status"] == "pending"
     assert rec["payload"] == payload
 
-    s.resolve(aid, {"approved": True})
+    s.resolve(aid, {"approved": True}, actor="drwang")
     assert s.get(aid)["status"] == "resolved"
     assert s.pending() == []  # 已审批的不在待审列表
 
@@ -86,13 +86,15 @@ def test_postgres_store_sqlite():
         assert rec["status"] == "pending"
         assert rec["payload"]["action"] == "emergency_handoff"
 
-        s.resolve(aid, {"approved": True})
+        # 审批人身份必须落库（敏感操作可追责）
+        s.resolve(aid, {"approved": True}, actor="drwang")
         assert s.get(aid)["status"] == "resolved"
+        assert s.get(aid)["resolved_by"] == "drwang"
         assert s.pending() == []
 
         audit = s.audit_log()
         actions = [a["action"] for a in audit]
-        assert "create" in actions and "resolve" in actions
+        assert "approval_create" in actions and "approval_resolve" in actions
     finally:
         if os.path.exists(path):
             os.remove(path)
@@ -107,5 +109,5 @@ def test_postgres_store_real():
     payload = {"action": "lock_and_settle", "intent": "booking", "tools": ["lock_appointment"]}
     aid = s.create("thread-real", payload)
     assert aid in [r["id"] for r in s.pending()]
-    s.resolve(aid, {"approved": True})
+    s.resolve(aid, {"approved": True}, actor="drwang")
     assert s.get(aid)["status"] == "resolved"

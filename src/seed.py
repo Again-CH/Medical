@@ -13,12 +13,17 @@ from .db import (
     Department,
     Doctor,
     DoctorSchedule,
+    ExamStep,
     LabReport,
+    Reminder,
     SymptomDeptMap,
     User,
     VitalSign,
+    ensure_patient_db,
+    get_patient_session,
     get_session,
     is_db_enabled,
+    resolve_exam_location,
 )
 
 # 科室主数据（code, name, description）
@@ -29,6 +34,7 @@ DEPARTMENTS = [
     ("INFECT", "感染科", "发热、感染、传染病"),
     ("DERM", "皮肤科", "皮疹、皮炎、过敏"),
     ("CARDIO", "心血管内科", "胸闷、心悸、高血压"),
+    ("STOMATOLOGY", "口腔科", "口腔溃疡、牙痛、牙周病、黏膜病变"),
 ]
 
 # 症状 → 科室映射（用于分诊）
@@ -38,30 +44,74 @@ SYMPTOM_MAPS = [
     ("咳嗽", "RESPIRATORY"),
     ("胸闷", "CARDIO"),
     ("腹痛", "GASTRO"),
+    ("肝痛", "GASTRO"),
+    ("肝区不适", "GASTRO"),
+    ("胆囊", "GASTRO"),
+    ("腹胀", "GASTRO"),
+    ("恶心", "GASTRO"),
+    ("呕吐", "GASTRO"),
+    ("腹泻", "GASTRO"),
     ("发烧", "INFECT"),
     ("皮疹", "DERM"),
+    ("口腔溃疡", "STOMATOLOGY"),
+    ("牙痛", "STOMATOLOGY"),
+    ("牙龈出血", "STOMATOLOGY"),
+    ("牙周病", "STOMATOLOGY"),
 ]
 
 # 医生（username, 姓名, 职称, 科室code）
 DOCTORS = [
     ("drwang", "王医师", "主任医师", "NEUROLOGY"),
     ("drli", "李医师", "副主任医师", "RESPIRATORY"),
+    ("drzhang", "张医师", "主治医师", "STOMATOLOGY"),
 ]
 
 # 患者演示账号（username, 姓名, 密码）
 PATIENTS = [
     ("alice", "Alice", "alice123"),
+    ("bob", "Bob", "bob123"),
 ]
 
-# alice 的检验 / 生命体征示例
-LAB_REPORTS = [
-    ("alice", "血常规", "WBC 6.2", "3.5-9.5×10⁹/L", False, "2026-08-20"),
-    ("alice", "CRP", "12 mg/L", "0-10 mg/L", True, "2026-08-20"),
-]
-VITALS = [
-    ("alice", "BP", "128/82", "mmHg", "2026-08-25 09:10"),
-    ("alice", "HR", "72", "bpm", "2026-08-25 09:10"),
-]
+# 各患者的检验 / 生命体征示例（key=username）
+LAB_REPORTS = {
+    "alice": [
+        ("血常规", "WBC 6.2", "3.5-9.5×10⁹/L", False, "2026-08-20"),
+        ("CRP", "12 mg/L", "0-10 mg/L", True, "2026-08-20"),
+        ("肝功能 ALT", "38 U/L", "7-40 U/L", False, "2026-08-20"),
+        ("空腹血糖", "5.4 mmol/L", "3.9-6.1 mmol/L", False, "2026-08-20"),
+    ],
+    "bob": [
+        ("血常规", "WBC 11.8", "3.5-9.5×10⁹/L", True, "2026-08-22"),
+        ("CRP", "45 mg/L", "0-10 mg/L", True, "2026-08-22"),
+        ("胸片", "右肺下叶斑片影", "—", True, "2026-08-22"),
+    ],
+}
+VITALS = {
+    "alice": [
+        ("BP", "128/82", "mmHg", "2026-08-25 09:10"),
+        ("HR", "72", "bpm", "2026-08-25 09:10"),
+        ("TEMP", "36.7", "℃", "2026-08-25 09:10"),
+        ("SpO2", "98", "%", "2026-08-25 09:10"),
+    ],
+    "bob": [
+        ("BP", "138/88", "mmHg", "2026-08-22 14:00"),
+        ("HR", "92", "bpm", "2026-08-22 14:00"),
+        ("TEMP", "38.4", "℃", "2026-08-22 14:00"),
+        ("SpO2", "95", "%", "2026-08-22 14:00"),
+    ],
+}
+
+# 随访提醒（key=username）：content, remind_at, channel, status
+REMINDERS = {
+    "alice": [
+        ("复查空腹血糖，评估近期饮食控制效果", "2026-08-30 09:00", "APP", "PENDING"),
+        ("记录本周居家血压，早晚各一次", "2026-08-31 20:00", "SMS", "PENDING"),
+    ],
+    "bob": [
+        ("肺部感染复查胸片，评估抗感染疗效", "2026-08-25 15:00", "APP", "PENDING"),
+        ("体温每日监测两次，持续 3 天", "2026-08-23 21:00", "APP", "DONE"),
+    ],
+}
 
 
 def seed_all() -> None:
@@ -141,32 +191,95 @@ def seed_all() -> None:
                     )
                 )
 
-        # 检验报告 / 生命体征
-        alice = s.query(User).filter(User.username == "alice").first()
-        if alice:
-            if not s.query(LabReport).filter(LabReport.patient_id == alice.id).first():
-                for _pid, item, result, ref, abn, rd in LAB_REPORTS:
-                    s.add(
-                        LabReport(
-                            patient_id=alice.id,
-                            item=item,
-                            result=result,
-                            ref_range=ref,
-                            abnormal=abn,
-                            report_date=rd,
+        # 检验报告 / 生命体征 / 随访提醒（按患者写入各自独立库，物理隔离）
+        for username in LAB_REPORTS:
+            u = s.query(User).filter(User.username == username).first()
+            if not u:
+                continue
+            ensure_patient_db(username)
+            with get_patient_session(username) as ps:
+                if not ps.query(LabReport).filter(LabReport.patient_id == username).first():
+                    for item, result, ref, abn, rd in LAB_REPORTS[username]:
+                        ps.add(
+                            LabReport(
+                                patient_id=username,
+                                item=item,
+                                result=result,
+                                ref_range=ref,
+                                abnormal=abn,
+                                report_date=rd,
+                            )
                         )
-                    )
-            if not s.query(VitalSign).filter(VitalSign.patient_id == alice.id).first():
-                for _pid, t, v, u, m in VITALS:
-                    s.add(
-                        VitalSign(
-                            patient_id=alice.id,
-                            type=t,
-                            value=v,
-                            unit=u,
-                            measured_at=m,
+                ps.commit()
+        for username in VITALS:
+            u = s.query(User).filter(User.username == username).first()
+            if not u:
+                continue
+            ensure_patient_db(username)
+            with get_patient_session(username) as ps:
+                if not ps.query(VitalSign).filter(VitalSign.patient_id == username).first():
+                    for t, v, u_unit, m in VITALS[username]:
+                        ps.add(
+                            VitalSign(
+                                patient_id=username,
+                                type=t,
+                                value=v,
+                                unit=u_unit,
+                                measured_at=m,
+                            )
                         )
+                ps.commit()
+        # 随访提醒（按患者写入各自独立库，幂等）
+        for username in REMINDERS:
+            u = s.query(User).filter(User.username == username).first()
+            if not u:
+                continue
+            ensure_patient_db(username)
+            with get_patient_session(username) as ps:
+                if not ps.query(Reminder).filter(Reminder.patient_id == username).first():
+                    for content, remind_at, channel, status in REMINDERS[username]:
+                        ps.add(
+                            Reminder(
+                                patient_id=username,
+                                content=content,
+                                remind_at=remind_at,
+                                channel=channel,
+                                status=status,
+                            )
+                        )
+                ps.commit()
+        s.commit()
+
+        # 示例体检流程单（让 alice 患者端“体检详细流程”立即有内容可见）
+        # 流程：先验血(B栋2楼) → 彩超(A栋3楼) → CT(A栋3楼)，模拟主诊医生开具
+        EXAM_FLOW = [
+            ("alice", "验血", "空腹采血，建议就诊前勿进食", "PENDING"),
+            ("alice", "彩超", "肝胆胰脾肾彩超，需憋尿", "PENDING"),
+            ("alice", "CT", "上腹部 CT 平扫，评估腹腔情况", "PENDING"),
+        ]
+        for username, name, note, status in EXAM_FLOW:
+            u = s.query(User).filter(User.username == username).first()
+            if not u:
+                continue
+            exists = (
+                s.query(ExamStep)
+                .filter(ExamStep.patient_username == username, ExamStep.step_name == name)
+                .first()
+            )
+            if not exists:
+                s.add(
+                    ExamStep(
+                        patient_username=username,
+                        seq=len(
+                            s.query(ExamStep).filter(ExamStep.patient_username == username).all()
+                        ),
+                        step_name=name,
+                        location=resolve_exam_location(name),
+                        note=note,
+                        status=status,
+                        created_by="drwang",
                     )
+                )
         s.commit()
     print("[seed] 种子数据已就绪")
 

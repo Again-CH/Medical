@@ -60,6 +60,10 @@ def _run_case(case: dict) -> dict:
     _PENDING.clear()
     g = build_graph()
     cfg = {"configurable": {"thread_id": f"e2e-{case['id']}"}}
+
+    # 记录首次 invoke 前的最大 appointment id（用于检测整个流程产生的预约）
+    before_first = _max_appointment_id()
+
     r = _run(
         g.ainvoke(
             {
@@ -76,17 +80,19 @@ def _run_case(case: dict) -> dict:
         result["tools"] = payload.get("tools")
 
         if "after_approve" in case["expect"]:
-            before_id = _max_appointment_id()
             r2 = _run(g.ainvoke(Command(resume={"approved": True}), cfg))
             result["after_approve_final"] = r2["messages"][-1].content
-            result["new_appointments"] = _new_appointments_since(before_id)
+            # 新流程：lock 在首次 invoke 已落库，settle 在 resume 时更新 medicare_settled
+            # 故检查整个流程（首次+resume）产生的新预约
+            result["new_appointments"] = _new_appointments_since(before_first)
         elif "after_reject" in case["expect"]:
-            before_id = _max_appointment_id()
             r2 = _run(g.ainvoke(Command(resume={"approved": False}), cfg))
             result["after_reject_final"] = r2["messages"][-1].content
-            result["new_appointments"] = _new_appointments_since(before_id)
+            result["new_appointments"] = _new_appointments_since(before_first)
     else:
         result["final"] = r["messages"][-1].content
+        # 非中断场景（如纯挂号自动执行）也检查是否产生了新预约
+        result["new_appointments"] = _new_appointments_since(before_first)
     return result
 
 
@@ -103,9 +109,7 @@ def test_e2e_closed_loop():
             # 2) 审核门 action / 敏感工具集合精确匹配（集合比较，顺序无关）
             assert res["action"] == exp["action"], f"[{cid}] action={res['action']}"
             if "tools" in exp:
-                assert sorted(res["tools"]) == sorted(exp["tools"]), (
-                    f"[{cid}] tools={res['tools']}"
-                )
+                assert sorted(res["tools"]) == sorted(exp["tools"]), f"[{cid}] tools={res['tools']}"
 
             # 3) 批准后：真实落库（最关键的闭环验证）—— 行级断言 status=LOCKED 且 medicare_settled
             if "after_approve" in exp:
@@ -115,11 +119,14 @@ def test_e2e_closed_loop():
                 assert all(s == "LOCKED" and m for s, m in new), (
                     f"[{cid}] 落库记录未满足 LOCKED+medicare_settled: {new}"
                 )
-            # 4) 拒绝后：不落库
+            # 4) 拒绝后：lock 已自动落库但 medicare_settled 未执行（无已结算记录）
             elif "after_reject" in exp:
                 assert res.get("after_reject_final"), f"[{cid}] 拒绝后应产出回复"
-                assert res["new_appointments"] == [], (
-                    f"[{cid}] 拒绝后仍落库: {res['new_appointments']}"
+                # 新流程：lock 在首次 invoke 已执行并落库，仅 settle 被拒
+                # 断言：产生的预约中没有任何一条是已结算的
+                has_any_settled = any(m for s, m in res["new_appointments"])
+                assert not has_any_settled, (
+                    f"[{cid}] 拒绝后不应有已结算记录: {res['new_appointments']}"
                 )
         else:
             # 5) 非敏感意图：不得触发审核门，且能产出回复
