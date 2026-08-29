@@ -110,6 +110,14 @@ APPROVAL_WAIT = Histogram(
     buckets=(1, 5, 15, 30, 60, 300, 900, 3600),
 )
 
+# ---------- 灰度 / 金丝雀发布 ----------
+ROLLOUT_EXPOSURES = Counter(
+    "rollout_exposures",
+    "灰度发布命中的请求数",
+    ["feature", "version", "scope"],
+    namespace=NAMESPACE,
+)
+
 # ---------- LLM 与工具 ----------
 LLM_CALLS = Counter("llm_calls", "LLM 调用次数", ["node", "model"], namespace=NAMESPACE)
 LLM_DURATION = Histogram(

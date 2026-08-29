@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import feedback as fb
+from . import rollout as _rollout
 from .auth import (
     UserExistsError,
     authenticate,
@@ -99,6 +100,7 @@ from .metrics import (
 from .metrics import (
     render as render_metrics,
 )
+from .prompts import validate_version as validate_prompt_version
 from .resilience import (
     KILL_SWITCH,
     RESILIENCE_ENABLED,
@@ -123,6 +125,10 @@ from .tracing import shutdown as shutdown_tracing
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 启动前 fail-closed 校验 prompt 版本完整性：哈希与 manifest 不一致直接拒绝启动，
+    # 避免带着被误改的 prompt 线上运行。
+    validate_prompt_version()
+
     # 启动时幂等建表 + 播种：确保 pending_calls / appointments 等业务表存在，
     # 使 HITL 待审批缓存（pending_calls）持久化真正生效。
     if is_db_enabled():
@@ -209,6 +215,16 @@ class CreateDoctorRequest(BaseModel):
     password: str = Field(..., min_length=MIN_PASSWORD_LEN, max_length=128)
     full_name: str = Field(..., min_length=1, max_length=100)
     title: str = Field(default="", max_length=100)
+
+
+class RolloutRequest(BaseModel):
+    """灰度 / 金丝雀发布配置请求体。"""
+
+    feature: str = Field(..., min_length=1, max_length=64)
+    version: str = Field(..., min_length=1, max_length=16)
+    scope: Literal["global", "tenant", "user"] = Field(default="global")
+    scope_value: str = Field(default="*", max_length=64)
+    percentage: int = Field(default=0, ge=0, le=100)
 
 
 class KnowledgeRequest(BaseModel):
@@ -709,6 +725,44 @@ async def list_tenants(_: None = Depends(_require_admin_key)):
         return [
             {"id": t.id, "code": t.code, "name": t.name, "is_default": t.is_default} for t in rows
         ]
+
+
+@app.get("/api/admin/rollouts")
+async def admin_list_rollouts(_: None = Depends(_require_admin_key)):
+    """列出全部灰度 / 金丝雀发布配置。"""
+    return {"rollouts": _rollout.list_rollouts()}
+
+
+@app.post("/api/admin/rollouts")
+async def admin_create_rollout(payload: RolloutRequest, _: None = Depends(_require_admin_key)):
+    """新增或覆盖一条灰度配置。"""
+    try:
+        row = _rollout.upsert_rollout(
+            feature=payload.feature,
+            version=payload.version,
+            scope=payload.scope,
+            scope_value=payload.scope_value,
+            percentage=payload.percentage,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {
+        "ok": True,
+        "id": row.id,
+        "feature": row.feature,
+        "version": row.version,
+        "scope": row.scope,
+        "scope_value": row.scope_value,
+        "percentage": row.percentage,
+    }
+
+
+@app.delete("/api/admin/rollouts/{rollout_id}")
+async def admin_delete_rollout(rollout_id: int, _: None = Depends(_require_admin_key)):
+    """删除灰度配置。"""
+    if not _rollout.delete_rollout(rollout_id):
+        raise HTTPException(status_code=404, detail="灰度配置不存在")
+    return {"ok": True}
 
 
 @app.post("/api/admin/departments")

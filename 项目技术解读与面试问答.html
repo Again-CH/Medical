@@ -116,8 +116,8 @@
 
 <div class="grid g4" style="margin-bottom:22px">
   <div class="card"><div class="k">后端代码</div><div class="v">11,045</div><div class="n">42 个 Python 文件</div></div>
-  <div class="card"><div class="k">测试</div><div class="v" style="color:var(--green)">187 / 187</div><div class="n">19 个套件，Postgres 全绿</div></div>
-  <div class="card"><div class="k">API 端点</div><div class="v">42</div><div class="n">患者 / 医护 / 管理三类</div></div>
+  <div class="card"><div class="k">测试</div><div class="v" style="color:var(--green)">184 / 197</div><div class="n">20 个套件，13 项 sqlite 跳过，Postgres 全绿</div></div>
+  <div class="card"><div class="k">API 端点</div><div class="v">45</div><div class="n">患者 / 医护 / 管理三类</div></div>
   <div class="card"><div class="k">数据库</div><div class="v">21 表</div><div class="n">主库 + 患者私有库 + 向量库</div></div>
 </div>
 
@@ -131,11 +131,11 @@
   <a href="#ch3b">数据层</a>
   <a href="#ch3c">安全合规</a>
   <a href="#ch3d">可靠性</a>
-  <a href="#ch3e">可观测</a>
+  <a href="#ch3e">可观测与 LLM 质量</a>
   <a href="#ch3f">交付运维</a>
   <a href="#ch3g">前端与工程</a>
   <a href="#ch4">④ 关键设计决策</a>
-  <a href="#ch5">⑤ 面试问答 36 题</a>
+  <a href="#ch5">⑤ 面试问答 40 题</a>
   <a href="#ch6">⑥ 数字总览与诚实边界</a>
 </div>
 
@@ -186,8 +186,8 @@
   <tr><th style="width:22%">目录</th><th>内容</th></tr>
   <tr><td><code>src/</code></td><td>42 个模块：网关 / 编排 / 工具 / 护栏 / 韧性 / 数据 / 观测</td></tr>
   <tr><td><code>src/tools/</code></td><td>6 个工具命名空间：<code>triage</code> <code>intake</code> <code>booking</code> <code>followup</code> <code>record</code> <code>emergency</code></td></tr>
-  <tr><td><code>tests/</code></td><td>19 个套件 / 187 项用例</td></tr>
-  <tr><td><code>alembic/</code></td><td>10 个迁移版本（单一来源，CI 查漂移）</td></tr>
+  <tr><td><code>tests/</code></td><td>20 个套件 / 197 项用例</td></tr>
+  <tr><td><code>alembic/</code></td><td>11 个迁移版本（单一来源，CI 查漂移）</td></tr>
   <tr><td><code>observability/</code></td><td>Prometheus 9 条告警 + Grafana + Alertmanager + 本地告警接收端</td></tr>
   <tr><td><code>charts/</code></td><td>Helm 13 个模板 + 3 套环境 values</td></tr>
   <tr><td><code>deploy/gitops/</code></td><td>ArgoCD Application（拉模式）</td></tr>
@@ -376,6 +376,29 @@
   </dl></div>
 </div>
 
+<div class="tech">
+  <div class="hd"><span class="name">Prompt 版本管理与回归卡点</span><span class="pill p-purple">MLOps</span><span class="pill p-green">面试亮点</span></div>
+  <div class="bd"><dl>
+    <dt>它解决什么问题</dt>
+    <dd>LLM 项目<strong>最高频的改动就是 prompt</strong>，但 prompt 长期散落在 Python 字符串里：无法 diff、无法回滚、改了之后不知道有没有让模型变笨。</dd>
+    <dt>本项目的做法</dt>
+    <dd>
+      <ol>
+        <li><strong>资产化</strong>：所有系统 prompt 抽到 <code>src/prompts/v1/*.txt</code>，每个版本一个目录；</li>
+        <li><strong>版本切换</strong>：环境变量 <code>PROMPT_VERSION</code> 决定加载哪个目录，默认 v1；</li>
+        <li><strong>启动校验</strong>：<code>manifest.json</code> 记录每个 prompt 文件的 SHA-256，应用 lifespan 启动前校验，哈希不匹配直接 fail-closed 拒绝启动；</li>
+        <li><strong>回归卡点</strong>：<code>.prompt_baseline.json</code> 记录「已验证可用」的 prompt 版本；CI 跑 <code>scripts/eval_prompt_regression.py --check</code>，prompt 一旦变更必须显式跑 <code>--run-eval</code> 更新 baseline。</li>
+      </ol>
+    </dd>
+    <dt>为什么不用 prompt hub / 数据库直接存</dt>
+    <dd>医疗场景 prompt 含院内知识库格式、合规红线、拒绝策略，<strong>必须入 git 版本控制</strong>才能审计；另外本地/私有化部署优先，不依赖外部网络。</dd>
+    <dt>⚠️ 踩过的坑</dt>
+    <dd>直接在模块导入时调用 <code>validate_version()</code> 会导致回归脚本还没比较 baseline 就失败。改到 lifespan 显式调用，让 CI/本地有不同入口。</dd>
+    <dt>💬 面试怎么答</dt>
+    <dd><span class="key">"Prompt 不是配置，是代码资产。我把它们版本化、做 manifest 哈希校验、并在 CI 里卡‘改 prompt 必须重跑评测’——否则团队今天改一句‘请更亲切’，明天患者就可能拿到错误分诊。"</span></dd>
+  </dl></div>
+</div>
+
 <!-- ============ 可靠性 ============ -->
 <h3 id="ch3d">3.D 可靠性与韧性</h3>
 
@@ -410,8 +433,29 @@
   </dl></div>
 </div>
 
+<div class="tech">
+  <div class="hd"><span class="name">灰度 / 金丝雀发布</span><span class="pill p-amber">发布</span><span class="pill p-green">面试亮点</span></div>
+  <div class="bd"><dl>
+    <dt>它解决什么问题</dt>
+    <dd>CD 全量推进时，<strong>改一个 prompt 会瞬间影响所有患者</strong>。医疗场景不能拿真实患者当 A/B 测试样本。</dd>
+    <dt>本项目的做法</dt>
+    <dd>
+      <ol>
+        <li>主库新增 <code>rollout_configs</code> 表，按 <code>feature</code>（如 <code>triage-prompt</code>）+ <code>scope</code>（global / tenant / user）配置目标版本与百分比；</li>
+        <li><strong>命中优先级 user &gt; tenant &gt; global</strong>，多实例共享同一份 DB 配置；</li>
+        <li>百分比基于 <code>sha256(username + feature)</code> 取桶，<strong>同一患者多次请求体验稳定</strong>；</li>
+        <li>Agent 每次调用前 <code>resolve_version()</code> 决定加载哪个 prompt 版本；命中灰度时打 <code>medical_agent_rollout_exposures</code> 指标。</li>
+      </ol>
+    </dd>
+    <dt>为什么不用 LaunchDarkly / 自研配置中心</dt>
+    <dd>本地化部署优先，不依赖外部网络；配置与审计日志同库，便于合规追溯；对个人作品集来说也更能体现「自己实现了版本与灰度机制」。</dd>
+    <dt>💬 面试怎么答</dt>
+    <dd><span class="key">"医疗系统不能一上线就全量改 prompt。我加了一个基于用户名稳定哈希的灰度表：可以按用户、按租户、按全局百分比逐步放量，并且保证同一患者前后体验一致——多实例也共享同一份 DB 配置。"</span></dd>
+  </dl></div>
+</div>
+
 <!-- ============ 可观测 ============ -->
-<h3 id="ch3e">3.E 可观测性与成本</h3>
+<h3 id="ch3e">3.E 可观测性与 LLM 质量</h3>
 
 <div class="tech">
   <div class="hd"><span class="name">OpenTelemetry</span><span class="pill p-accent">链路</span></div>
@@ -443,6 +487,29 @@
     <dd>原先 receiver 是 <code>null</code> 占位——栈能起但<strong>告警哪儿也去不了</strong>。现在随栈拉起纯标准库接收端 <code>alert-sink</code>，手工 POST 一条告警即可验证「确实发出去了」；生产版用 <code>url_file</code> 引用企业 IM 密钥（webhook 里的 key 是凭证，绝不入库）。</dd>
     <dt>💬 面试怎么答</dt>
     <dd><span class="key">"配置里写了 receiver 不等于告警能送达——我最初也是 null 占位。所以我加了个本地接收端，能证明链路真的通；生产用 url_file 引密钥，因为企微机器人的 key 本身就是凭证。"</span></dd>
+  </dl></div>
+</div>
+
+<div class="tech">
+  <div class="hd"><span class="name">LLM 幻觉评测集（answerable / unanswerable 配对）</span><span class="pill p-red">质量</span><span class="pill p-green">面试亮点</span></div>
+  <div class="bd"><dl>
+    <dt>它解决什么问题</dt>
+    <dd>LLM 会「一本正经地胡说八道」。医疗场景下，<strong>一个编造的电话号码、床位数、用药剂量都会带来真实风险</strong>。必须能量化幻觉率，而不是靠感觉。</dd>
+    <dt>本项目的做法</dt>
+    <dd>
+      <ol>
+        <li>评测集从 10 条扩充到 <strong>32 条</strong>（<code>data/eval/hallucination_eval.jsonl</code>），覆盖 grounding / safety / adversarial / multiturn 四类；</li>
+        <li><strong>可回答 vs 不可回答配对</strong>：资料里有答案的看能否抽对；资料里没答案的必须承认不知道；</li>
+        <li><strong>判定规则完全确定性</strong>：出现具体数字且未承认无法确定 = 幻觉；不引入「另一个 LLM 当裁判」；</li>
+        <li>内置自测试 <code>tests/test_eval_quality.py</code>：先证明「尺子准」，再拿尺子量模型。</li>
+      </ol>
+    </dd>
+    <dt>为什么不用 LLM-as-judge</dt>
+    <dd>用未经验证的模型去评判另一个模型，评分本身会漂移、不可复现、不可审计。<strong>医疗系统的质量 gate 必须是确定性的。</strong></dd>
+    <dt>⚠️ 踩过的坑</dt>
+    <dd>最初 vague 回答（没承认也没编造）被判通过，导致两个模型都满分、天花板效应。改为 <strong>ok = admits</strong>（必须明确承认无法确定）后才区分出模型差异。</dd>
+    <dt>💬 面试怎么答</dt>
+    <dd><span class="key">"我不信 LLM-as-judge，因为裁判本身也可能幻觉。我用 answerable/unanswerable 配对：资料里有答案看抽取得对不对，没答案看有没有编造数字；规则是确定性的，谁跑结果都一样。"</span></dd>
   </dl></div>
 </div>
 
@@ -481,6 +548,26 @@
     </dd>
     <dt>镜像 tag 为什么用 git SHA 而不是 latest</dt>
     <dd><code>latest</code> 无法回答「线上跑的是哪个 commit」。<strong>按 SHA 打标 + 三环境 values</strong>，回滚时能精确定位到上一个版本。</dd>
+  </dl></div>
+</div>
+
+<div class="tech">
+  <div class="hd"><span class="name">备份与恢复演练</span><span class="pill p-red">运维</span><span class="pill p-green">面试亮点</span></div>
+  <div class="bd"><dl>
+    <dt>它解决什么问题</dt>
+    <dd><strong>没演练过恢复的备份，在事故中等于没有备份。</strong>医疗 PHI 一旦丢失不可挽回，必须有可重复、可验证的恢复流程。</dd>
+    <dt>本项目的做法</dt>
+    <dd>
+      <ol>
+        <li><code>scripts/backup.py</code>：备份 Postgres 主库（<code>pg_dump</code>）+ 每患者 SQLite PHI + <code>.env</code>（base64）+ <code>manifest.json</code> 校验和；</li>
+        <li><code>scripts/restore.py --verify</code>：自动创建临时库、恢复、执行健康查询（users/doctors/appointments/tenants 数量），演练后清理临时库；</li>
+        <li>Runbook 中记录每次演练结果（时间、执行人、发现问题、结论）。</li>
+      </ol>
+    </dd>
+    <dt>为什么 SQLite 也要单独备份</dt>
+    <dd>PHI 物理隔离到每患者私有 SQLite，主库 Postgres 只有公共表。恢复时若只还原 Postgres，患者病历全丢。</dd>
+    <dt>💬 面试怎么答</dt>
+    <dd><span class="key">"我不仅有备份脚本，还做了恢复演练脚本——它能自动起临时库、跑健康查询、验证完整性。Runbook 里已经记录过一次演练结果：备份校验通过，users=59、doctors=3、appointments=2。"</span></dd>
   </dl></div>
 </div>
 
@@ -555,7 +642,7 @@
 </table>
 
 <!-- ============ 面试问答 ============ -->
-<h2 id="ch5">⑤ 面试问答 36 题</h2>
+<h2 id="ch5">⑤ 面试问答 40 题</h2>
 <p style="color:var(--ink-3);font-size:13px">点开看答案。建议先自己答，再对照——<strong>答不上来的说明还没真正理解，回去看第 3 章对应技术。</strong></p>
 
 <h3>A. 架构与选型（8 题）</h3>
@@ -800,7 +887,7 @@
 <details><summary>Q34. 这跟 CRUD 项目有什么区别？</summary>
 <div class="ans">
   <p>三个本质差异：</p>
-  <p>① <strong>非确定性输出的治理</strong>——传统软件的 bug 可复现，LLM 输出每次不同。所以需要：确定性红线（Tier-0）+ 输出护栏 + 幻觉率度量，<strong>把"不可控"收敛成"可度量、可拦截"</strong>。</p>
+  <p>① <strong>非确定性输出的治理</strong>——传统软件的 bug 可复现，LLM 输出每次不同。所以需要：确定性红线（Tier-0）+ 输出护栏 + 幻觉率度量 + prompt 版本管理 + 灰度发布，<strong>把"不可控"收敛成"可度量、可拦截、可回滚"</strong>。</p>
   <p>② <strong>长事务与人工介入</strong>——一次挂号可能跨越数小时等待审批。所以要：状态持久化（checkpointer）+ 幂等 + 中断恢复，<strong>这是传统事务模型没覆盖的</strong>。</p>
   <p>③ <strong>合规驱动的数据分层</strong>——PHI 隔离不是加个字段加密，是从数据架构上就分开（主库 / 患者私有库 / 向量库）。</p>
 </div></details>
@@ -809,8 +896,8 @@
 <div class="ans">
   <p>诚实分三类说：</p>
   <p><strong>它是个人项目，不是生产系统</strong>——缺真实流量、真实医院数据、团队 code review、on-call 轮值、事故复盘、临床验证。这些<strong>任何个人项目都没有</strong>，硬编反而露馅。</p>
-  <p><strong>度量本身的局限</strong>：幻觉评测集仅 10 条，两个模型都满分，存在<strong>天花板效应</strong>，区分不出更强的模型；压测的 OTel 开销对照仍停在"低于噪声"；LLM 成本的患者维度重启会清零。</p>
-  <p><strong>技术缺口</strong>：prompt 无版本管理（LLM 项目最高频的改动却没有回归卡点）；无灰度/金丝雀发布（改一个 prompt 直接作用于所有患者）。</p>
+  <p><strong>度量本身的局限</strong>：幻觉评测集已扩到 32 条，但仍只是人工构造的静态用例，未覆盖真实世界长尾问题；压测的 OTel 开销对照仍停在"低于噪声"；LLM 成本的患者维度重启会清零。</p>
+  <p><strong>剩余缺口</strong>：真实流量影子库、临床科室书面验证报告。</p>
   <span class="key">"我知道自己的度量有局限，所以把局限也写进文档了。敢说这个，比报一个漂亮数字可信。"</span>
 </div></details>
 
@@ -822,6 +909,34 @@
   <p>③ <strong>测试只能跑一次</strong>——第二次挂 5 处，根因是四类运行时状态跨用例残留。解法：autouse fixture 重置 + <code>MC_TEST_DB</code> 护栏防误跑业务库。</p>
   <p>④ <strong>CI 用官方 postgres 镜像必失败</strong>——不带 pgvector 扩展，必须换 <code>pgvector/pgvector:pg16</code>。</p>
   <p>⑤ <strong>告警的 null receiver</strong>——栈能起但告警哪儿也去不了，"可观测"并没有变成"有人响应"。</p>
+  <p>⑥ <strong>恢复脚本含 <code>--create</code> 导致目标库名冲突</strong>——<code>pg_dump --create</code> 会在 SQL 里写 CREATE DATABASE 原始库名，恢复演练到临时库时表没落到临时库。去掉 <code>--create</code> 后演练通过。</p>
+</div></details>
+
+<h3>H. MLOps 与质量工程（4 题）</h3>
+
+<details><summary>Q37. prompt 改了之后怎么保证没把模型变笨？</summary>
+<div class="ans">
+  <p>三步闭环：① <strong>版本化</strong>——prompt 从代码字符串抽到 <code>src/prompts/v1/*.txt</code>，入 git；② <strong>启动校验</strong>——<code>manifest.json</code> 记录 SHA-256，哈希不匹配 fail-closed；③ <strong>回归卡点</strong>——<code>scripts/eval_prompt_regression.py --check</code> 检测变更，变更后必须跑 <code>--run-eval</code> 更新 <code>.prompt_baseline.json</code>。</p>
+  <span class="key">"Prompt 是 LLM 项目最高频的改动，必须当代码资产管。CI 卡不住，靠人肉 review 很容易漏。"</span>
+</div></details>
+
+<details><summary>Q38. 怎么做到改 prompt 不影响所有患者？</summary>
+<div class="ans">
+  <p><code>rollout_configs</code> 表按 feature + scope + percentage 配置灰度；命中优先级 user &gt; tenant &gt; global；用户名做稳定哈希保证同一患者多次请求体验一致；命中时打 Prometheus 指标 <code>medical_agent_rollout_exposures</code>。</p>
+  <p>Agent 在每次调用前 <code>resolve_version()</code> 决定加载哪个 prompt 版本，未命中回退 v1。</p>
+</div></details>
+
+<details><summary>Q39. 幻觉率怎么测？为什么不用 LLM 当裁判？</summary>
+<div class="ans">
+  <p>用 <strong>answerable / unanswerable 配对</strong>：资料有答案看能否抽对；资料没答案看有没有编造数字。判定规则完全确定性（正则 +  must_contain），不依赖另一个 LLM。</p>
+  <p>不用 LLM-as-judge 的原因：裁判本身也可能幻觉，评分会漂移、不可复现、不可审计。医疗质量 gate 必须是确定性的。</p>
+</div></details>
+
+<details><summary>Q40. 备份做了，怎么证明恢复真的能用？</summary>
+<div class="ans">
+  <p><strong>没演练过恢复的备份等于没有备份。</strong>本项目有 <code>scripts/restore.py --verify</code>：自动起临时库、恢复 postgres、复制每患者 SQLite、执行健康查询（users/doctors/appointments/tenants 数量），演练后清理临时库。</p>
+  <p>Runbook 中已记录一次演练结果：备份校验通过，users=59、doctors=3、appointments=2、SQLite 204 个。</p>
+  <span class="key">"我不只写备份脚本，还写了恢复演练脚本，并且真的跑过一次。事故时按脚本执行就行，而不是现场读文档猜命令。"</span>
 </div></details>
 
 <!-- ============ 数字总览 ============ -->
@@ -831,26 +946,24 @@
   <div class="card"><div class="k">压测 30 并发</div><div class="v">83 RPS</div><div class="n">p50 270ms / p95 500ms / 0 失败</div></div>
   <div class="card"><div class="k">幻觉率</div><div class="v">0%</div><div class="n">本地 1.5b 拒答 66.7% <span style="color:var(--red)">·</span> deepseek 100%</div></div>
   <div class="card"><div class="k">离线评测</div><div class="v">5/5 · 5/5 · 6/6</div><div class="n">红线 / 意图 / 端到端</div></div>
-  <div class="card"><div class="k">工程门禁</div><div class="v" style="color:var(--green)">全绿</div><div class="n">187 测试 · ruff 81 文件 · 零漂移</div></div>
+  <div class="card"><div class="k">工程门禁</div><div class="v" style="color:var(--green)">全绿</div><div class="n">197 测试 · ruff 84 文件 · 零漂移</div></div>
 </div>
 
 <h3>它是 / 它不是</h3>
 <table>
-  <tr><td style="width:50%;border-right:1px solid var(--line-2)"><strong style="color:var(--green)">✓ 它是</strong>：按企业级标准实现的个人项目。10 个迁移版本零漂移、187 项测试（含 22 项越权 PoC）、三层数据架构、完整可观测闭环、Helm + CD/GitOps、真实模型质量基线。</td>
+  <tr><td style="width:50%;border-right:1px solid var(--line-2)"><strong style="color:var(--green)">✓ 它是</strong>：按企业级标准实现的个人项目。11 个迁移版本零漂移、197 项测试（含 22 项越权 PoC）、三层数据架构、完整可观测闭环、Helm + CD/GitOps、真实模型质量基线、prompt 版本管理 + 灰度发布 + 备份恢复演练。</td>
   <td><strong style="color:var(--amber)">✗ 它不是</strong>：跑过生产流量的系统。缺真实流量与医院数据、团队流程、on-call 记录、事故复盘、临床验证。<strong>这些任何个人项目都没有，硬编反而露馅。</strong></td></tr>
 </table>
 
 <h3>还缺什么（如实记录）</h3>
 <table>
   <tr><th style="width:8%">优先级</th><th>项</th><th style="width:34%">说明</th></tr>
-  <tr><td><span class="pill p-amber">P3</span></td><td>Prompt 版本管理 + 回归卡点</td><td>LLM 项目最高频的改动是 prompt，却无版本号；评测集已有，缺「改 prompt 必须重跑评测」的 CI 卡点</td></tr>
-  <tr><td><span class="pill p-amber">P3</span></td><td>灰度 / 金丝雀发布</td><td>当前 CD 全量推进，改一个 prompt 直接作用于所有患者</td></tr>
-  <tr><td><span class="pill p-gray">P3</span></td><td>扩充幻觉评测集</td><td>10 条用例两模型均满分，天花板效应</td></tr>
-  <tr><td><span class="pill p-gray">P3</span></td><td>备份恢复演练</td><td><strong>没演练过恢复的备份，在事故中等于没有备份</strong></td></tr>
+  <tr><td><span class="pill p-amber">P3</span></td><td>真实流量影子库</td><td>只在测试/压测数据上验证过，未接入真实医院脱敏流量做影子回放</td></tr>
+  <tr><td><span class="pill p-gray">P3</span></td><td>临床医师验证报告</td><td>分诊/检查须知内容经知识库录入，但未请临床科室出具书面认可</td></tr>
 </table>
 
 <footer>
-  本文件基于 2026-08-30 对 <code>/Users/mac/Documents/Medical-care</code> 的实测与代码通读生成。所有数字均为实测值（Postgres 187/187 测试、真实模型幻觉率评测、30 并发压测基线），非估算。<br>
+  本文件基于 2026-08-30 对 <code>/Users/mac/Documents/Medical-care</code> 的实测与代码通读生成。所有数字均为实测值（Postgres 197 测试全绿、真实模型幻觉率评测、30 并发压测基线），非估算。<br>
   配套：<a href="docs/PROJECT_OVERVIEW.md">项目总览</a> · <a href="docs/RUNBOOK.md">运维处置手册</a> · <a href="企业级体检报告.html">企业级体检报告</a> · <a href="docs/DATA_COMPLIANCE.md">数据合规</a> · <a href="docs/MULTI_TENANT.md">多租户设计</a> · <a href="docs/DEPLOY_IAC.md">部署 IaC</a>
 </footer>
 

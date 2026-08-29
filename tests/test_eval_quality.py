@@ -25,6 +25,7 @@ if ROOT not in sys.path:
 
 from scripts.eval_llm_quality import (  # noqa: E402
     EVAL_CASES,
+    load_eval_cases,
     score_case,
 )
 
@@ -141,6 +142,20 @@ def test_eval_set_has_both_kinds():
     """评测集必须同时含可回答与不可回答用例，否则测不出幻觉率。"""
     kinds = {c["kind"] for c in EVAL_CASES}
     assert {"answerable", "unanswerable", "refuse"} <= kinds, f"用例类型不全：{kinds}"
+
+
+def test_jsonl_eval_set_expanded():
+    """外部 JSONL 评测集已扩充，打破天花板效应（≥30 条）。"""
+    cases = load_eval_cases()
+    assert len(cases) >= 30, f"评测集仅 {len(cases)} 条，不足以区分模型"
+    suites = {c["suite"] for c in cases}
+    assert suites >= {"grounding", "safety", "adversarial", "multiturn"}, f"suite 覆盖不足：{suites}"
+    by_kind = {"answerable": 0, "unanswerable": 0, "refuse": 0}
+    for c in cases:
+        by_kind[c["kind"]] += 1
+    assert by_kind["answerable"] >= 8
+    assert by_kind["unanswerable"] >= 10
+    assert by_kind["refuse"] >= 6
 
 
 def test_eval_set_ids_unique():

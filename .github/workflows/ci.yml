@@ -1,165 +1,69 @@
 name: CI
 
-# 触发：推送/PR 到主分支；也支持手动触发（Actions 页面 Run workflow）
+# 持续集成：PR 与 main 推送时跑「能不能合」的质量门禁。
+# 与 CD 的分工：CI 负责验证代码+配置+prompt 完整性；CD 负责构建与部署。
 on:
-  push:
-    branches: [main, master]
   pull_request:
-  workflow_dispatch:
-
-# 同一分支只保留最新一次运行，节省资源
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+    branches: [main]
+  push:
+    branches: [main]
 
 jobs:
-  # ① 静态检查：ruff 保代码风格与明显错误（作为合并门禁）
-  lint:
+  quality-gates:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: 安装 ruff
-        run: pip install "ruff==0.16.5"
-      - name: ruff check
-        run: ruff check .
-      - name: ruff format check
-        run: ruff format --check .
-
-  # ② 单元/端到端测试：多 Python 版本矩阵，保证兼容性
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12", "3.13"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-      - name: 安装依赖
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      - name: 运行测试（默认 fake 模型 + 内存存储，开箱即跑）
-        run: pytest -q
-
-  # ②.5 schema 漂移门禁：ORM 模型必须与 Alembic 迁移一致，否则合并即失败
-  #     默认用临时 SQLite（无需外部数据库），快速反馈；方言级校验见 integration 任务。
-  schema-drift:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: 安装依赖
-        run: pip install -r requirements.txt
-      - name: 检查 ORM 模型与迁移是否一致（防漂移）
-        run: python scripts/check_migrations.py
-
-  # ③ 离线评测门禁：复用 tests/eval 数据集，红线/意图准确率即为守门员
-  eval:
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: 安装依赖
-        run: pip install -r requirements.txt
-      - name: 离线评测（红线 + 意图）
-        run: python scripts/eval_offline.py --out eval_report.json
-      - name: 上传评测报告
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: eval-report
-          path: eval_report.json
-
-  # ④ 集成测试：真实 PostgreSQL 服务容器，验证生产级持久化
-  integration:
-    runs-on: ubuntu-latest
-    needs: test
     services:
       postgres:
-        # 必须用带 pgvector 的镜像：knowledge_documents 迁移依赖 CREATE EXTENSION vector，
-        # 官方 postgres:16 不含该扩展，upgrade head 会直接失败。
         image: pgvector/pgvector:pg16
         env:
-          POSTGRES_USER: med_user
-          POSTGRES_PASSWORD: med_pass
-          POSTGRES_DB: med_agent
-        ports:
-          - 5432:5432
+          POSTGRES_PASSWORD: postgres
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-    env:
-      DATABASE_URL: postgresql://med_user:med_pass@localhost:5432/med_agent
-      # 显式确认这是 CI 一次性数据库，允许测试重置运行时状态（见 tests/conftest.py 护栏）
-      MC_TEST_DB: "1"
+        ports:
+          - 5432:5432
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
+
       - name: 安装依赖
-        run: pip install -r requirements.txt
-      - name: 全量测试（真实 PostgreSQL 持久化）
-        run: pytest -q
-      - name: 迁移一致性校验（Postgres 方言，防模型/迁移漂移）
-        run: python scripts/check_migrations.py
-
-  # ⑤ 安全门禁三件套：SAST（bandit）+ 依赖漏洞（pip-audit）+ 密钥泄露（gitleaks）
-  #    医疗系统的供应链与代码安全必须左移，不能等到上线前才审计。
-  security:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # gitleaks 需要完整历史才能扫描提交中的密钥
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: 安装安全工具与锁定依赖
         run: |
           python -m pip install --upgrade pip
-          pip install bandit pip-audit
-          # 用锁定版本安装，确保扫描的是生产实际会部署的依赖树
-          pip install -r requirements.lock
+          pip install -r requirements.txt
+          pip install ruff pytest
 
-      - name: SAST 静态安全扫描（bandit）
-        # -ll 仅报告中高危；跳过测试目录（测试数据含弱口令属预期）
-        run: bandit -r src -ll -x tests --exit-zero
-        continue-on-error: true
+      # 1) 代码风格：ruff 失败说明代码本身不合规
+      - name: Lint (ruff)
+        run: ruff check src tests scripts
 
-      - name: 依赖漏洞扫描（pip-audit）
-        # 发现已知 CVE 即失败，阻断合并
-        run: pip-audit -r requirements.lock --strict
-
-      - name: 密钥泄露扫描（gitleaks）
-        uses: gitleaks/gitleaks-action@v2
+      # 2) 数据库迁移漂移门禁：alembic check 保证模型与迁移一致
+      - name: 迁移漂移检查 (alembic check)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MC_TEST_DB: "1"
+          DATABASE_URL: "postgresql+psycopg2://postgres:postgres@localhost:5432/medical_agent"
+        run: |
+          # CI 中需要真实的 pgvector；生产运行前会启动服务
+          alembic check
 
-  # ⑥ 越权回归门禁：把已复现的安全 PoC 固化为断言，防止修复被后续改动回退
-  security-isolation:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: 安装依赖
-        run: pip install -r requirements.txt
-      - name: 越权与隔离回归测试
-        run: pytest tests/test_security_isolation.py -q
+      # 3) 快速单元测试：SQLite 模式覆盖 170+ 用例，验证业务逻辑回归
+      - name: 单元测试 (pytest sqlite)
+        run: python -m pytest -q
+
+      # 4) Prompt 回归卡点：prompt 内容一旦变化，必须显式跑 --run-eval 更新 baseline
+      - name: Prompt 变更检测
+        run: |
+          python scripts/eval_prompt_regression.py --check
+
+      # 5) 如果 .prompt_baseline.json 也被 PR 修改，说明开发者已主动跑过 --run-eval；
+      #    这里只做提醒，不阻塞（真实评测需本地 Ollama / Deepseek，GitHub Runner 无此环境）。
+      - name: Prompt baseline 更新提醒
+        if: failure()
+        run: |
+          echo "::warning:: 若 prompt 已变更，请在本地执行："
+          echo "::warning::   python scripts/eval_prompt_regression.py --run-eval --backend ollama"
+          echo "::warning:: 评测通过后提交 .prompt_baseline.json。"

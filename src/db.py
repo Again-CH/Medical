@@ -276,6 +276,31 @@ class Feedback(Base):
     created_at = mapped_column(DateTime, default=utcnow)
 
 
+class RolloutConfig(Base):
+    """灰度 / 金丝雀发布配置表。
+
+    - ``feature`` 标识一次发布单元，如 ``triage-prompt``、``intake-prompt``。
+    - ``version`` 为目标版本（对应 ``src/prompts/<version>/`` 目录）。
+    - ``scope`` 支持 ``global`` / ``tenant`` / ``user``；命中优先级为 user > tenant > global。
+    - ``percentage`` 在 0-100 之间；用户名+feature 做稳定哈希，保证同一用户多次请求
+      不会前后体验跳变。
+    - 设计取舍：不在内存/缓存里做灰度，而是走主库表，保证多实例之间一致。
+    """
+
+    __tablename__ = "rollout_configs"
+    id = mapped_column(Integer, primary_key=True)
+    feature = mapped_column(String(64), nullable=False, index=True)
+    version = mapped_column(String(16), nullable=False)
+    scope = mapped_column(String(16), default="global", nullable=False)  # global / tenant / user
+    scope_value = mapped_column(String(64), default="", nullable=False)  # tenant_id / username / *
+    percentage = mapped_column(Integer, default=0, nullable=False)  # 0-100
+    created_at = mapped_column(DateTime, default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("feature", "scope", "scope_value", name="uq_rollout_feature_scope"),
+    )
+
+
 class ConsentRecord(Base):
     """用户知情同意书签署记录（Tier-0 法律责任红线）。
 

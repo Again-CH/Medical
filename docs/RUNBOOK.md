@@ -358,7 +358,61 @@ curl -fsS -X POST -H "X-Admin-Key: $ADMIN_API_KEY" -H 'Content-Type: application
 
 > **删除权操作务必双人复核**：不可逆，且涉及法定合规义务。
 
-### 4.7 验证告警闭环是否还活着
+### 4.7 备份与恢复演练
+
+> 没演练过恢复的备份，在事故中等于没有备份。
+
+#### 备份
+
+```bash
+# 每日/每次发版前执行，输出到 NFS/对象存储挂载点
+python scripts/backup.py --out /mnt/nfs/medical-agent-backup
+
+# 输出结构
+# /mnt/nfs/medical-agent-backup/2026-08-30_123456/
+#   manifest.json       # 校验和与元数据
+#   postgres.sql.gz     # 主库
+#   data/               # 每患者 SQLite PHI
+#   env/.env.b64        # 环境配置（需另行加密保管密钥）
+```
+
+#### 恢复演练（临时库，不污染生产）
+
+```bash
+BACKUP_DIR=/mnt/nfs/medical-agent-backup/2026-08-30_123456
+
+# 1) 校验备份完整性 + 恢复到临时库 + 健康查询
+DATABASE_URL=postgresql+psycopg2://mac@localhost:5432/medical_agent \
+  python scripts/restore.py --backup "$BACKUP_DIR" --verify
+
+# 2) 若演练通过，记录到 drill log（见 4.7.1）
+```
+
+#### 真实灾难恢复（覆盖目标库，危险）
+
+```bash
+# 必须先 drop/create 目标库，再恢复
+DATABASE_URL=postgresql+psycopg2://mac@localhost:5432/medical_agent \
+  python scripts/restore.py --backup "$BACKUP_DIR" \
+  --target-db postgresql+psycopg2://mac@localhost:5432/medical_agent --yes
+```
+
+> **注意**：恢复后必须重启应用 Pod，让 SQLAlchemy 连接池重新建立；并验证 `/health` 与一条样例对话。
+
+#### 4.7.1 演练记录（每次演练后追加）
+
+```markdown
+- 2026-08-30 01:24 CST
+  - 执行人：workbench-agent
+  - 备份：/tmp/medical-agent-backup-test3/2026-08-29_212442
+  - 临时库：medical_agent_restore_drill_91248
+  - 健康查询：users=59, doctors=3, appointments=2, tenants=1
+  - SQLite：204 个私有库成功恢复
+  - 结果：通过
+  - 发现问题：初始脚本含 --create 导致恢复目标库名冲突，已修复（去掉 --create）
+```
+
+### 4.8 验证告警闭环是否还活着
 
 告警配置正确 ≠ 告警能送达。每次改完 Alertmanager 配置后都应验证：
 
@@ -481,7 +535,6 @@ cat alert-sink-data/alerts.jsonl             # 告警落盘证据（每行一条
 1. **数据库主备切换** —— 项目用托管 RDS/PolarDB，切换流程依赖云厂商能力，未在此定义。
 2. **多院区容灾切换** —— 多租户已实现数据隔离，但跨院区流量切换尚无预案。
 3. **LLM 供应商切换** —— 支持 `fake`/`ollama`/`openai` 三种模式，但运行时热切换的验证流程未定义。
-4. **备份恢复演练** —— `PHI` 备份存在，但**恢复演练未做过**（未经演练的备份不能算备份）。
-5. **值班表与联系方式** —— 第 5 节为模板，需填入真实值班人与企业 IM/电话告警。
+4. **值班表与联系方式** —— 第 5 节为模板，需填入真实值班人与企业 IM/电话告警。
 
-> 第 4 条尤其要提醒：**没演练过恢复的备份，在事故中等于没有备份。** 建议至少每季度做一次恢复演练并留记录。
+> 备份恢复演练已在 4.7 节实现并记录一次演练结果，建议至少每季度重复一次。

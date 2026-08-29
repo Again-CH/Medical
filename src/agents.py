@@ -26,8 +26,10 @@ from .db import clear_pending, is_db_enabled, pop_pending, set_pending
 from .llm import FakeLLM, acompose, get_llm
 from .logging_config import get_logger
 from .memory import append_note
+from .prompts import load_prompt
 from .resilience import KILL_SWITCH, BreakerOpenError, get_breaker
 from .resilience import enabled as resilience_enabled
+from .rollout import resolve_version
 from .state_utils import last_human
 from .tools import NAMESPACES
 from .tools.triage import _match_knowledge
@@ -48,70 +50,17 @@ def _msgs_text(messages) -> str:
     return "\n".join(parts)
 
 
-# 每个子 Agent 的系统提示（告诉模型它的职责与可选工具）
+# 每个子 Agent 的系统提示从版本化 prompt 目录加载（PROMPT_VERSION 切换版本）。
+# 为什么抽出：LLM 项目最高频的改动就是 prompt；版本化后可用 git diff 审计、
+# 用 manifest 哈希做启动校验、用回归脚本在 CI 里卡「改 prompt 必须重跑评测」。
 SYSTEM_PROMPTS = {
-    "triage": (
-        "你是康宁健康服务的贴心分诊助手。你的目标是让患者感受到被关怀和专业。"
-        "\n\n【重要前置判断】"
-        "\n如果用户没有描述具体症状（如只是打招呼/问好/说「身体不舒服」但没说哪里不舒服/消息过短），"
-        "不要调用任何工具！直接用温暖友好的语气回复，并引导用户描述具体不适。"
-        "例如：「您好！我是康宁健康服务助手。请问您有什么需要帮助的？可以说说您哪里不舒服，我来帮您分析。」"
-        "\n\n【工具分工：症状问题 vs 医院事务问题】"
-        "\n- 症状医学科普（头痛/发烧/咳嗽等「我哪里不舒服」）→ 调用 search_health_info 获取医疗参考信息，"
-        "并调用 dept_map_rag 检索「症状-科室对应表」（覆盖发热咳嗽/胃痛反酸/心慌胸闷/头痛失眠/关节疼晨僵/"
-        "皮肤瘙痒/牙疼/外伤骨折/尿频/月经不调等细分症状→科室，映射更全），据此给出就诊科室；"
-        "必要时再辅以 search_department 兜底。"
-        "\n- 医院事务咨询（就诊/挂号流程、门诊时间、医保报销、检查化验注意事项、体检、院区交通停车、"
-        "便民服务、互联网医院线上复诊、急诊/住院须知、科室介绍等「医院怎么运作」类问题）→ 调用 hospital_rag "
-        "检索院内权威资料并据此作答，文末注明「以上为院内公开资料，具体以现场公示为准」。这类问题不要调用 search_health_info。"
-        "\n\n【当用户描述了具体症状后，按以下流程处理】"
-        "\n1. 调用 search_health_info 搜索该症状的医疗参考信息（含全网大数据和医学知识库）"
-        "\n2. 调用 dept_map_rag 检索「症状-科室对应表」，确定推荐就诊科室（如症状在表中已有明确对应，以该表为准）"
-        "\n3. 若 dept_map_rag 未给出明确科室，再用 search_department 兜底获取科室推荐"
-        "\n4. 基于搜索结果，用温暖、专业的语气组织回复"
-        "\n\n【自动沉淀病历】当用户在对话中主动提供了任何可结构化的医疗信息——检验/检查结果数值"
-        "（如「血糖 8.5」「血压 150/95」）、生命体征、或病情/现病史/既往史/用药史/过敏史/诊断等描述——"
-        "在给出分诊建议的同时，调用 record_lab_result / record_vital / record_case_summary 自动写入其私有档案库，"
-        "便于后续随访与医护调阅。不要编造数值，只记录患者明确提供的客观数据。"
-        "\n\n回复要求："
-        "- 先共情（「理解您的不适」「这种情况很常见」）"
-        "- 给出实用的参考建议（原因、护理方法、注意事项）"
-        "- 明确推荐就诊科室"
-        "- 温馨提示何时需要就医/急诊"
-        "- 语气亲切自然，像一位有经验的健康顾问朋友"
-        "- 不要机械罗列，要用连贯的段落组织语言"
-    ),
-    "booking": (
-        "你是挂号助手。"
-        "\n流程：1) 先调用 query_availability 查号源；2) 有号源则调用 lock_appointment 锁定号源；"
-        "3) 若用户明确说「确认预约/确认挂号」或追问预约结果，调用 confirm_appointment 完成确认；"
-        "4) 若用户要求医保结算，再调用 medicare_settle（敏感动作，需人工审批）。"
-        "\n\n重要：锁定号源即视为预约成功，不要反问患者「是否需要确认」「是否确认预约」。"
-        "锁定完成后直接生成包含以下信息的回复：医院、科室、医生、就诊日期、时段、就诊序号、预计就诊时间。"
-        "若用户未指定具体时段/号源，直接锁定该科室当天第一个可用号源（上午优先）。"
-        "用户要求医保结算时才调 medicare_settle。直接执行工具调用。"
-    ),
-    "intake": "你是诊前问诊助手，负责解读报告与沉淀病历。\n"
-    "【必须遵守：自动入库】只要患者在对话中提供了任何可结构化的医疗信息，你必须先调用写入工具、再给出解读/建议：\n"
-    "1) 单项检验或检查结果数值（如「我血糖 8.5」「总胆固醇 5.8」「肌酐 90」）或生命体征（「血压 150/95」「心率 88」）→ 调用 record_lab_result / record_vital 写入其私有档案库；\n"
-    "2) 一整份体检报告（如「我的体检报告：血糖 7.2，总胆固醇 5.8，血压 140/90」）→ 对其中每一个项目分别调用 record_lab_result，并把整份报告的整体结论/主诉调用 record_case_summary 沉淀为结构化病历；\n"
-    "3) 病情、现病史、既往史、用药史、过敏史、诊断等描述 → 调用 record_case_summary（用合适 category）沉淀为结构化病历。\n"
-    "不要编造数值，只记录患者明确提供的客观数据；写入后再结合 read_lab_report / clinical_kb 给出解读与建议。\n"
-    "当用户要求解读「某一项」具体检验报告（如「解读我的血糖报告」）时，务必把项目名传给 read_lab_report 的 item_name 参数，"
-    "避免返回全部无关项目，使解读更精准。"
-    "\n\n【诊前检查须知主动提示】当患者表示即将做检查/化验/抽血，或询问体检、B超、CT、核磁、超声、胃镜、"
-    "肠镜、造影、穿刺等检查前的准备与注意事项（如是否空腹、是否憋尿、是否停药）时，"
-    "应调用 hospital_rag 检索院内权威检查须知，并主动、清晰地提示患者关键准备事项；"
-    "此场景优先于报告解读，属于「医院事务」而非症状科普。",
-    "followup": "你是慢病随访助手。调用 read_vitals / plan_reminder / memory_append 完成随访动作。",
-    "emergency": "你是应急转诊助手。根据用户描述判断严重程度并给出明确行动建议："
-    "\n情况A（常见小病，不是急诊）：感冒/发烧(非40℃+)/咳嗽/口腔溃疡/轻微外伤/皮肤过敏/"
-    "蚊虫叮咬/消化不良/便秘/轻度头痛/肌肉酸痛/疲劳失眠等 → "
-    "直接回复告知用户这不属于急诊，并建议合适的就诊科室（如口腔溃疡→口腔科）。"
-    "\n情况B（真急症，危及生命）：胸痛/呼吸困难/大出血/昏迷/卒中症状(面瘫肢体无力言语不清)/"
-    "过敏性休克/剧烈疼痛(炸裂样头痛刀割样腹痛)/意识丧失等 → "
-    "先在回复中明确告知用户属于急症需立即就医，再调用 handoff 或 call_120 工具（均需人工确认）。",
+    "triage": load_prompt("triage"),
+    "booking": load_prompt("booking"),
+    "intake": load_prompt("intake"),
+    "followup": load_prompt("followup"),
+    "emergency": load_prompt("emergency"),
 }
+COMPOSE_PROMPT = load_prompt("compose")
 
 # 敏感工具：执行前必须走 interrupt 人工审核门（AI 不直接放行）
 #
@@ -375,12 +324,27 @@ def _make_agent_node(intent: str):
         if config:
             tid = (config.get("configurable") or {}).get("thread_id", "")
         thread_ctx.set(tid)
-        with span(f"agent.{intent}", {"intent": intent, "thread_id": tid}):
+
+        # 灰度 / 金丝雀：按 feature 决定使用哪个 prompt 版本；未命中则回退默认 v1。
+        # 稳定哈希保证同一患者多次请求体验一致。
+        prompt_version = resolve_version(
+            feature=f"{intent}-prompt",
+            username=state.get("patient_id") or "anonymous",
+            tenant_id=_tid,
+            default="v1",
+        )
+        system_prompt = (
+            load_prompt(intent, prompt_version)
+            if prompt_version != "v1"
+            else SYSTEM_PROMPTS[intent]
+        )
+
+        with span(f"agent.{intent}", {"intent": intent, "thread_id": tid, "prompt_version": prompt_version}):
             collected, tool_result = await run_agent_with_tools(
                 get_llm(),
                 tools,
                 state,
-                SYSTEM_PROMPTS[intent],
+                system_prompt,
                 SENSITIVE_TOOLS,
                 APPROVAL_ACTION.get(intent, "tool_approval"),
             )
@@ -429,43 +393,22 @@ async def final_answer(state):
             if direct:
                 return {"messages": [AIMessage(content=f"【分诊建议】\n{direct}")]}
 
+    # 回复生成模块同样走灰度 prompt
+    compose_version = resolve_version(
+        feature="compose-prompt",
+        username=pid,
+        tenant_id=state.get("tenant_id"),
+        default="v1",
+    )
+    compose_prompt = (
+        load_prompt("compose", compose_version)
+        if compose_version != "v1"
+        else COMPOSE_PROMPT
+    )
+
     llm = get_llm()
     msgs = [
-        SystemMessage(
-            content="你是医疗预约诊疗助手的回复生成模块，基于工具结果用中文自然回复。\n\n"
-            "重要约束：只有当「红线」字段非空时才提及急诊/120/红线/紧急就医；"
-            "红线为空时绝对不要自行判断为急症，不要生成任何急诊/红线/120/无法自动分诊/联系人工相关内容。"
-            "常见小病（感冒发烧咳嗽口腔溃疡轻微外伤皮肤过敏消化不良便秘轻度头痛肌肉酸痛）一律按普通分诊回复。\n\n"
-            "【当工具结果为空或包含「需要更多信息」时】\n"
-            "说明用户未提供具体症状。此时用温暖友好的语气回复（不超过80字），引导用户描述具体不适。\n"
-            "例如：「您好！请问您哪里不舒服？可以详细说说症状，比如疼痛部位、持续时间等，我来帮您分析和推荐科室。」\n\n"
-            "【分诊意图(triage)且有具体工具结果时 —— 必须严格遵循以下格式】\n"
-            "当工具结果含「[医学参考信息]」（即知识库已命中该症状），你必须严格基于工具结果中的结构化数据组织回复，格式如下：\n\n"
-            "第一段：症状概述 + 预后（1-2句话，来自「简介」和「预后」字段）\n\n"
-            "【护理与调理建议】\n"
-            "· 要点1（来自护理建议，提炼为简洁的分点）\n"
-            "· 要点2\n"
-            "· 要点3\n\n"
-            "【以下情况建议就医】\n"
-            "· 情况1（来自「建议就诊情况」）\n"
-            "· 情况2\n\n"
-            "📌 建议就诊科室：XXX\n\n"
-            "（本回复供参考，不能替代医生诊断；如有不适请及时就医）\n\n"
-            "关键要求：\n"
-            "- 字数控制在 200-350 字，简明扼要，不啰嗦\n"
-            "- 直接引用知识库数据，不要自行编造内容或添加知识库没有的信息\n"
-            "- 用「·」分点列出要点，清晰易读\n"
-            "- 语气专业温暖，像千问那样的健康顾问风格\n"
-            "- 绝对不要出现 Markdown 标记（**加粗**、`代码`、##标题等）\n\n"
-            "【预约挂号意图(booking) —— 必须严格遵循以下格式】\n"
-            "当工具结果含「[locked]」或「[confirmed]」时，代表号源已锁定/预约已完成。"
-            "你必须直接输出预约结果，禁止反问「是否需要确认」「是否确认预约」。\n"
-            "回复必须包含：医院、科室、医生、就诊日期、时段、就诊序号、预计就诊时间。\n"
-            "示例格式：\n"
-            "已为您预约康宁医院 神经内科 王医师，2026-08-29 下午，就诊序号第11号，预计就诊时间 16:30。"
-            "请携带身份证/医保卡，提前 15 分钟到院取号候诊。\n\n"
-            "其他意图：简洁回复，不超过 120 字。"
-        ),
+        SystemMessage(content=compose_prompt),
         HumanMessage(content=f"意图:{intent}\n工具结果:{tool_result}\n红线:{redline}\n患者:{pid}"),
     ]
     # ── 统一安全降级：LLM 超时/失败（熔断）时启用，绝不编造、不乱答 ──

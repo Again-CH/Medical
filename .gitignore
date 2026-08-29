@@ -27,6 +27,9 @@ bench/*.csv
 *.db
 medical_agent.db
 
+# 本地备份产物（由 scripts/backup.py 生成，不应入 VCS）
+backups/
+
 # macOS
 .DS_Store
 

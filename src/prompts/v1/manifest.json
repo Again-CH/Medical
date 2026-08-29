@@ -1,0 +1,21 @@
+{
+  "version": "v1",
+  "description": "医疗 Agent 初始稳定版 prompt：分诊、挂号、诊前、随访、应急、回复生成。",
+  "prompts": [
+    "triage",
+    "booking",
+    "intake",
+    "followup",
+    "emergency",
+    "compose"
+  ],
+  "files": {
+    "triage": "6100849ffd4fac3d0ca18a76a86c449336fcabaaded41e5c56dfcd46557743d4",
+    "booking": "5cabbad4333343faac43184d6bcf9da85747bed41faaca6df5edf6a034ccbfee",
+    "intake": "2b480a1cfb0c2da3316b3a14885552c19a1a7c2a2c86724d9d422f016719492c",
+    "followup": "e946be6ecc02e103e9e16fb51edc4baf9d5cb2cea9fd1eeca7630dc694bd8c3c",
+    "emergency": "b056e201b5304ded5ca3de1a9a0e808fdb722e97ba5b1e90eee35cd3fe883e26",
+    "compose": "93f0bcb874c5c913f5e58f1b1f681df9fa37e91ee13a13811296470be4a2ef31"
+  },
+  "created_at": "2026-08-30"
+}

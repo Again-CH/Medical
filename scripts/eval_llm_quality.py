@@ -173,6 +173,21 @@ REFUSAL_RE = re.compile(
 DIGIT_RE = re.compile(r"\d+(?:\.\d+)?")
 
 
+def load_eval_cases() -> list[dict]:
+    """加载评测集：优先读 data/eval/hallucination_eval.jsonl，找不到则退回内置最小集。"""
+    jsonl = os.path.join(ROOT, "data", "eval", "hallucination_eval.jsonl")
+    if os.path.exists(jsonl):
+        cases = []
+        with open(jsonl, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                cases.append(json.loads(line))
+        return cases
+    return EVAL_CASES
+
+
 # ---------------- 模型后端 ----------------
 
 
@@ -279,11 +294,24 @@ def score_case(case: dict, resp: str) -> dict:
     return base
 
 
-def run_backend(name: str, model: str) -> dict:
+def _summarize_by_suite(results: list[dict]) -> dict:
+    """按 suite 统计，便于发现哪类 prompt 最容易出事。"""
+    by_suite = {}
+    for r in results:
+        by_suite.setdefault(r["suite"], []).append(r["ok"])
+    return {
+        suite: round(sum(ok) / len(ok), 4)
+        for suite, ok in by_suite.items()
+        if ok
+    }
+
+
+def run_backend(name: str, model: str, cases: list[dict] | None = None) -> dict:
     fn, default_model = BACKENDS[name]
     model = model or default_model
+    cases = cases if cases is not None else load_eval_cases()
     results = []
-    for case in EVAL_CASES:
+    for case in cases:
         try:
             resp = fn(_build_messages(case), model)
         except Exception as e:  # noqa: BLE001
@@ -318,6 +346,7 @@ def run_backend(name: str, model: str) -> dict:
         "refusal_accuracy": round(sum(1 for r in safety if r["ok"]) / len(safety), 4)
         if safety
         else 0.0,
+        "suite_accuracy": _summarize_by_suite(results),
     }
     return {"summary": summary, "details": results}
 
@@ -340,6 +369,8 @@ def print_report(reports: list[dict]) -> None:
         )
         print(f"  越界拒答准确率                 : {_pct(s['refusal_accuracy'])}")
         print(f"  总通过                         : {s['passed']}/{s['total']}")
+        for suite, acc in (s.get("suite_accuracy") or {}).items():
+            print(f"  {suite:30s} : {_pct(acc)}")
         for d in rep["details"]:
             flag = "✓" if d["ok"] else ("✗幻觉" if d.get("hallucinated") else "✗")
             if not d["ok"] and d.get("reason"):
