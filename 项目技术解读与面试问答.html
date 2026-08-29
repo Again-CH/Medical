@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>医疗预约诊疗 Agent · 技术解读与面试问答</title>
+<style>
+  :root{
+    --bg:#f7f8fa;--panel:#ffffff;--ink:#1a1d21;--ink-2:#4a5158;--ink-3:#7b838c;
+    --line:#e3e6ea;--line-2:#eef0f3;--accent:#1f6feb;--accent-soft:#eaf2ff;
+    --green:#1a7f45;--green-soft:#e8f5ed;--amber:#9a6400;--amber-soft:#fdf3e2;
+    --red:#b3261e;--red-soft:#fdecea;--purple:#6a3fb5;--purple-soft:#f1ebfb;
+    --radius:10px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    font-size:14px;line-height:1.75;}
+  .wrap{max-width:1060px;margin:0 auto;padding:40px 24px 90px;}
+  header{border-bottom:2px solid var(--ink);padding-bottom:20px;margin-bottom:28px;}
+  h1{font-size:27px;margin:0 0 8px;letter-spacing:-0.3px;}
+  .sub{color:var(--ink-3);font-size:13px;}
+  h2{font-size:19px;margin:48px 0 16px;padding-left:12px;border-left:4px solid var(--accent);line-height:1.35;}
+  h3{font-size:15.5px;margin:28px 0 10px;color:var(--ink);}
+  h4{font-size:14px;margin:18px 0 8px;color:var(--ink-2);}
+  p{margin:0 0 12px;color:var(--ink-2);}
+  strong{color:var(--ink);font-weight:600;}
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;}
+  code{background:var(--line-2);padding:1px 5px;border-radius:4px;color:#c0341d;}
+  a{color:var(--accent);}
+
+  .grid{display:grid;gap:14px;}
+  .g2{grid-template-columns:repeat(2,1fr);}
+  .g3{grid-template-columns:repeat(3,1fr);}
+  .g4{grid-template-columns:repeat(4,1fr);}
+  @media(max-width:860px){.g2,.g3,.g4{grid-template-columns:1fr;}}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;}
+  .card .k{font-size:12px;color:var(--ink-3);margin-bottom:6px;letter-spacing:.3px;}
+  .card .v{font-size:22px;font-weight:650;color:var(--ink);line-height:1.2;}
+  .card .n{font-size:12px;color:var(--ink-3);margin-top:4px;}
+
+  .pill{display:inline-block;padding:1px 8px;border-radius:11px;font-size:11.5px;font-weight:600;white-space:nowrap;}
+  .p-green{background:var(--green-soft);color:var(--green);}
+  .p-accent{background:var(--accent-soft);color:var(--accent);}
+  .p-amber{background:var(--amber-soft);color:var(--amber);}
+  .p-red{background:var(--red-soft);color:var(--red);}
+  .p-purple{background:var(--purple-soft);color:var(--purple);}
+  .p-gray{background:var(--line-2);color:var(--ink-3);}
+
+  table{width:100%;border-collapse:collapse;background:var(--panel);
+    border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin:12px 0 6px;font-size:13px;}
+  th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line-2);vertical-align:top;}
+  th{background:#fafbfc;font-weight:600;color:var(--ink);font-size:12.5px;}
+  tr:last-child td{border-bottom:none;}
+  td{color:var(--ink-2);}
+  td strong{color:var(--ink);}
+
+  .callout{border-left:3px solid var(--accent);background:var(--accent-soft);
+    padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0;font-size:13px;color:var(--ink-2);}
+  .callout.warn{border-left-color:var(--amber);background:var(--amber-soft);}
+  .callout.good{border-left-color:var(--green);background:var(--green-soft);}
+  .callout .t{font-weight:650;color:var(--ink);display:block;margin-bottom:3px;}
+
+  /* 技术卡片 */
+  .tech{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:0;margin:18px 0;overflow:hidden;}
+  .tech>.hd{background:#fafbfc;border-bottom:1px solid var(--line);padding:12px 20px;
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .tech>.hd .name{font-size:15.5px;font-weight:650;color:var(--ink);}
+  .tech>.bd{padding:16px 20px 6px;}
+  .tech dl{margin:0;}
+  .tech dt{font-size:12px;color:var(--ink-3);font-weight:600;margin-top:12px;letter-spacing:.3px;}
+  .tech dt:first-child{margin-top:0;}
+  .tech dd{margin:3px 0 0;color:var(--ink-2);font-size:13.5px;}
+
+  /* 面试问答折叠 */
+  details{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    margin:8px 0;overflow:hidden;}
+  details[open]{border-color:#c9d6e8;}
+  summary{cursor:pointer;padding:11px 16px;font-weight:600;color:var(--ink);
+    font-size:13.5px;list-style:none;display:flex;gap:8px;align-items:flex-start;}
+  summary::-webkit-details-marker{display:none;}
+  summary::before{content:"▸";color:var(--accent);font-size:13px;line-height:1.6;flex-shrink:0;}
+  details[open] summary::before{content:"▾";}
+  details[open] summary{background:#fafbfc;border-bottom:1px solid var(--line-2);}
+  .ans{padding:12px 16px 14px 32px;font-size:13.5px;color:var(--ink-2);}
+  .ans p{margin:0 0 9px;}
+  .ans ul,.ans ol{margin:0 0 9px;padding-left:20px;}
+  .ans li{margin-bottom:5px;}
+  .ans .key{display:block;background:var(--green-soft);border-left:3px solid var(--green);
+    padding:7px 12px;border-radius:0 6px 6px 0;margin:9px 0;font-size:13px;color:var(--ink);}
+  .ans .key::before{content:"💡 加分句：";font-weight:650;color:var(--green);}
+
+  .toc{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 20px;}
+  .toc a{display:inline-block;margin:3px 14px 3px 0;font-size:13px;text-decoration:none;}
+  .toc a:hover{text-decoration:underline;}
+
+  .flow{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:18px 20px;overflow-x:auto;}
+  .flow pre{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:12.5px;line-height:1.65;color:var(--ink-2);white-space:pre;}
+
+  footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);
+    font-size:12px;color:var(--ink-3);line-height:1.8;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>医疗预约诊疗 Agent · 技术解读与面试问答</h1>
+  <div class="sub">每一项技术都回答三个问题：<strong>它解决什么问题</strong> · <strong>为什么是它而不是别的</strong> · <strong>面试怎么答</strong><br>
+  最后更新 2026-08-30 · 配套：<a href="docs/PROJECT_OVERVIEW.md">项目总览</a> · <a href="docs/RUNBOOK.md">运维手册</a> · <a href="企业级体检报告.html">体检报告</a></div>
+</header>
+
+<div class="grid g4" style="margin-bottom:22px">
+  <div class="card"><div class="k">后端代码</div><div class="v">11,045</div><div class="n">42 个 Python 文件</div></div>
+  <div class="card"><div class="k">测试</div><div class="v" style="color:var(--green)">187 / 187</div><div class="n">19 个套件，Postgres 全绿</div></div>
+  <div class="card"><div class="k">API 端点</div><div class="v">42</div><div class="n">患者 / 医护 / 管理三类</div></div>
+  <div class="card"><div class="k">数据库</div><div class="v">21 表</div><div class="n">主库 + 患者私有库 + 向量库</div></div>
+</div>
+
+<div class="toc">
+  <strong style="font-size:13px">目录</strong><br>
+  <a href="#how">怎么用这份文档</a>
+  <a href="#ch1">① 项目全景</a>
+  <a href="#ch2">② 技术栈全景</a>
+  <a href="#ch3">③ 技术逐个深度解读</a>
+  <a href="#ch3a">编排与 Agent</a>
+  <a href="#ch3b">数据层</a>
+  <a href="#ch3c">安全合规</a>
+  <a href="#ch3d">可靠性</a>
+  <a href="#ch3e">可观测</a>
+  <a href="#ch3f">交付运维</a>
+  <a href="#ch3g">前端与工程</a>
+  <a href="#ch4">④ 关键设计决策</a>
+  <a href="#ch5">⑤ 面试问答 36 题</a>
+  <a href="#ch6">⑥ 数字总览与诚实边界</a>
+</div>
+
+<h2 id="how">怎么用这份文档</h2>
+<div class="callout">
+  <span class="t">三种读法</span>
+  <strong>面试前一天</strong>：直接跳到第 5 章，36 题自测，答不上来的回第 3 章查对应技术。<br>
+  <strong>系统理解</strong>：按 ①→②→③→④ 顺序读，第 3 章每节都按「是什么 / 为什么是它 / 和替代方案的差别 / 本项目怎么用 / 面试怎么答」组织。<br>
+  <strong>临场翻查</strong>：第 6 章的数字总览背下来，第 4 章的 14 条决策理由能讲 3 条就够撑一场面试。
+</div>
+
+<h2 id="ch1">① 项目全景</h2>
+
+<h3>1.1 它解决什么问题</h3>
+<p>医院门诊场景的智能体系统，覆盖患者从问诊咨询 → 挂号 → 检查 → 随访的主链路，并给医护提供审批与病历工作台。</p>
+<p><strong>刻意的边界（Tier-0 红线）</strong>：不做诊断、不开处方、不给用药剂量。系统只做<strong>流程服务</strong>与<strong>信息组织</strong>，临床判断交还医生。这条红线不是"暂时没做"，而是<strong>产品定义的一部分</strong>——AI 给错了药量会出人命。</p>
+
+<h3>1.2 一次请求的完整旅程</h3>
+<div class="flow"><pre>患者提问（SSE 流式）
+   │
+   ├─① 鉴权     JWT 校验 → role / sub / token_version        src/auth.py
+   ├─② 知情同意 未签署则拦截                                  src/redline.py
+   ├─③ 输入红线 急症/定位违规 → 直接引导 120 或急诊            src/safety.py
+   ├─④ 追踪     new_trace_id → OTel span 树 + ChatLog         src/tracing.py
+   │
+   ├─⑤ 编排     supervisor 意图分类 → 4 个子 Agent 之一        src/supervisor.py
+   │            triage / intake / booking / followup
+   │            （旁路：chat 知识库直出、human 人工审批）
+   │
+   ├─⑥ 工具     各 Agent 独立工具命名空间                      src/tools/
+   │            ├─ 敏感动作 → interrupt() 挂起 → 审批单落库
+   │            └─ 非敏感 → 直接执行
+   │
+   ├─⑦ 护栏     输出侧二次拦截（诊断/处方/剂量/他人 PHI）      src/guard.py
+   └─⑧ 落库     ChatLog + 指标 + 成本记账                     src/metrics.py
+
+医护在 /review 审批 → Command(resume=…) 恢复 → 从 checkpointer 读回状态 → 执行 → 落库</pre></div>
+
+<div class="callout good">
+  <span class="t">这段链路里最值得讲的三处</span>
+  ① <strong>工具 schema 里没有 <code>patient_id</code></strong>——身份只从 JWT 取，prompt injection 跨不了患者；<br>
+  ② <strong>敏感动作走 <code>interrupt()</code></strong> 而非直接调用，审批单落库、医护确认后才执行；<br>
+  ③ <strong>输出侧还有一道护栏</strong>——不是只信 prompt，模型真说出诊断/剂量时会被拦下。
+</div>
+
+<h3>1.3 目录结构</h3>
+<table>
+  <tr><th style="width:22%">目录</th><th>内容</th></tr>
+  <tr><td><code>src/</code></td><td>42 个模块：网关 / 编排 / 工具 / 护栏 / 韧性 / 数据 / 观测</td></tr>
+  <tr><td><code>src/tools/</code></td><td>6 个工具命名空间：<code>triage</code> <code>intake</code> <code>booking</code> <code>followup</code> <code>record</code> <code>emergency</code></td></tr>
+  <tr><td><code>tests/</code></td><td>19 个套件 / 187 项用例</td></tr>
+  <tr><td><code>alembic/</code></td><td>10 个迁移版本（单一来源，CI 查漂移）</td></tr>
+  <tr><td><code>observability/</code></td><td>Prometheus 9 条告警 + Grafana + Alertmanager + 本地告警接收端</td></tr>
+  <tr><td><code>charts/</code></td><td>Helm 13 个模板 + 3 套环境 values</td></tr>
+  <tr><td><code>deploy/gitops/</code></td><td>ArgoCD Application（拉模式）</td></tr>
+  <tr><td><code>client/</code></td><td>Vite 双入口 + <code>src/shared/</code> 共享模块 + Playwright E2E</td></tr>
+  <tr><td><code>docs/</code></td><td>总览 / 运维手册 / 数据合规 / 多租户 / 部署 IaC</td></tr>
+</table>
+
+<h2 id="ch2">② 技术栈全景</h2>
+<div class="flow"><pre>┌─ 接入层 ───── FastAPI · Pydantic · SSE · 严格 CSP · JWT ─────────┐
+├─ 编排层 ───── LangGraph（StateGraph + interrupt + checkpointer）─┤
+├─ 工具层 ───── 6 个命名空间 · 按角色与租户隔离 ──────────────────┤
+├─ 护栏层 ───── 输入红线 · 输出护栏 · PHI 脱敏 · OLP ─────────────┤
+├─ 韧性层 ───── 重试 · 熔断 · kill switch · 降级 ─────────────────┤
+├─ 数据层 ───── PostgreSQL 18.6 · SQLAlchemy 2.0 · Alembic ───────┤
+│               pgvector（向量）· 每患者 SQLite（PHI 物理隔离）────┤
+├─ 观测层 ───── OTel · Prometheus · Grafana · Alertmanager ────────┤
+└─ 交付层 ───── Docker · Helm · GitHub Actions · ArgoCD ───────────┘</pre></div>
+
+<h2 id="ch3">③ 技术逐个深度解读</h2>
+
+<!-- ============ 编排与 Agent ============ -->
+<h3 id="ch3a">3.A 编排与 Agent</h3>
+
+<div class="tech">
+  <div class="hd"><span class="name">LangGraph</span><span class="pill p-accent">编排</span><span class="pill p-green">核心</span></div>
+  <div class="bd"><dl>
+    <dt>它解决什么问题</dt>
+    <dd>把「多步推理 + 工具调用 + 人工介入 + 长时运行」的状态机管起来。纯 LLM 应用是单轮问答，Agent 应用需要<strong>跨轮次保状态、可中断、可恢复、可回放</strong>。</dd>
+    <dt>为什么是它，而不是别的</dt>
+    <dd>
+      <table style="margin:6px 0">
+        <tr><th style="width:20%">方案</th><th>差别</th></tr>
+        <tr><td><strong>LangGraph</strong></td><td>把 Agent 建模成<strong>有状态图</strong>：节点=步骤、边=流转、<strong>checkpointer 负责持久化</strong>。<code>interrupt()</code> 是一等公民，天然支持 HITL；配合 Postgres checkpointer，<strong>服务重启后审批状态不丢</strong>。适合需要人工介入与长事务的业务。</td></tr>
+        <tr><td>LangChain 原生 AgentExecutor</td><td>本质是「while 循环 + 工具调用」黑盒，<strong>状态不可控、不可中断、不可回放</strong>。做 demo 快，但没法在中间插一道人工审批。</td></tr>
+        <tr><td>CrewAI / AutoGen</td><td>偏<strong>多 Agent 自由对话</strong>。灵活但流程不可预测——医疗场景要的是<strong>确定性流程</strong>（该审批必须审批），不是 Agent 自由发挥。</td></tr>
+        <tr><td>Dify / Coze</td><td>低代码平台，<strong>快但脱离代码控制</strong>。越权校验、PHI 隔离这类横切逻辑很难优雅嵌入；也不利于展示工程能力。</td></tr>
+      </table>
+    </dd>
+    <dt>本项目怎么用</dt>
+    <dd><code>src/graph.py</code> 建图；<code>src/supervisor.py</code> 做意图分类（中枢辐射）；<code>src/agents.py</code> 定义 4 个子 Agent。<strong>敏感动作用 <code>interrupt()</code> 挂起</strong>，审批单落 <code>approvals</code> 表，医护批准后 <code>Command(resume=…)</code> 恢复。checkpointer 用 <code>AsyncPostgresSaver</code>。</dd>
+    <dt>⚠️ 踩过的坑</dt>
+    <dd><strong><code>interrupt()</code> 在 resume 时会把节点从头重跑</strong>——若重跑时 LLM 不再生成那个敏感调用，会出现「已批准却没执行」。解法：把待审批的 tool_calls 落到 <code>pending_calls</code> 表，resume 时直接读取执行，保证落库确定性。</dd>
+    <dt>💬 面试怎么答</dt>
+    <dd>别只说"用了 LangGraph"。说清：<strong>我需要的不只是多轮调用，是「能中断、能恢复、能回放、跨重启不丢」的状态机</strong>——这是选 LangGraph 而非 AgentExecutor 的真实理由。<span class="key">"敏感操作审批如果只存在内存里，服务一重启患者的挂号就凭空消失了，这在医疗场景不可接受。"</span></dd>
+  </dl></div>
+</div>
+
+<div class="tech">
+  <div class="hd"><span class="name">中枢辐射 vs 网状编排</span><span class="pill p-purple">架构模式</span></div>
+  <div class="bd"><dl>
+    <dt>为什么这么选</dt>
+    <dd>网状（Agent 互相调用）灵活但<strong>调用链不可预测、难追踪、难加全局护栏</strong>。中枢辐射（supervisor 统一分发）牺牲了一点灵活性，换来：意图可审计、工具权限可按 Agent 收敛、新 Agent 接入不影响既有链路。</dd>
+    <dt>本项目怎么用</dt>
+    <dd>4 个子 Agent（<code>triage</code> 分诊 / <code>intake</code> 问诊·报告·病历 / <code>booking</code> 挂号 / <code>followup</code> 随访），各有<strong>独立工具命名空间</strong>——<code>triage</code> 拿不到 <code>booking</code> 的锁号工具。另有 <code>chat</code>（知识库直出）与 <code>human</code>（审批中断）两条旁路。</dd>
+  </dl></div>
+</div>
+
+<div class="tech">
+  <div class="hd"><span class="name">contextvars（tenant_ctx / patient_ctx）</span><span class="pill p-accent">运行时</span></div>
+  <div class="bd"><dl>
+    <dt>它解决什么问题</dt>
+    <dd>工具函数需要知道「当前是哪个患者 / 哪个院区」，但<strong>工具签名里不能出现这些参数</strong>（否则 prompt injection 可操纵）。</dd>
+    <dt>为什么是 contextvars，而不是 thread-local 或逐层传参</dt>
+    <dd>
+      <ul style="margin:4px 0 0;padding-left:20px">
+        <li><strong>逐层传参</strong>：要把 patient/tenant 一路透传到每个工具，签名被污染，且 LangGraph <code>ToolNode</code> 未必会帮你传。</li>
+        <li><strong>thread-local</strong>：<strong>在 async 下会串</strong>——一个 asyncio 任务里可能跑多个请求的协程，thread-local 是线程级而非任务级隔离。</li>
+        <li><strong>contextvars</strong>：<strong>任务级</strong>隔离，正是 asyncio 的设计配套。但注意：<strong>LangGraph 的 ToolNode 在独立异步任务里执行，context 不会自动继承</strong>——所以本项目在 agent 节点里从 graph state 重新 <code>set()</code>，让它跨任务边界存活。</li>
+      </ul>
+    </dd>
+    <dt>💬 面试怎么答</dt>
+    <dd><span class="key">"我用 contextvars 而不是 thread-local，因为 async 下 thread-local 会串号；而且 LangGraph 的 ToolNode 跑在独立异步任务里，上下文不会自动继承，所以我在 agent 节点里从 state 重新 set 了一次——这个坑只有真跑了才发现。"</span></dd>
+  </dl></div>
+</div>
+
+<!-- ============ 数据层 ============ -->
+<h3 id="ch3b">3.B 数据层</h3>
+
+<div class="tech">
+  <div class="hd"><span class="name">PostgreSQL 18.6</span><span class="pill p-accent">主库</span></div>
+  <div class="bd"><dl>
+    <dt>为什么是它，而不是 MySQL / MongoDB</dt>
+    <dd>
+      <table style="margin:6px 0">
+        <tr><th style="width:18%">方案</th><th>差别</th></tr>
+        <tr><td><strong>PostgreSQL</strong></td><td>① <strong>pgvector 扩展</strong>——向量检索和关系数据同库，省一套独立向量库与其同步问题；② 事务与约束强，医疗数据容不得最终一致；③ <strong>JSONB</strong> 存半结构化 payload。</td></tr>
+        <tr><td>MySQL</td><td>无官方向量类型，需外挂向量库；JSON 支持弱于 JSONB。选它的理由通常是团队既有栈，而非技术优势。</td></tr>
+        <tr><td>MongoDB</td><td>灵活但<strong>跨文档事务弱</strong>。审批门要求「锁号 + 建预约 + 记审计」要么全成要么全败，文档库不是最佳场景。</td></tr>
+      </table>
+    </dd>
+    <dt>⚠️ CI 踩坑</dt>
+    <dd>集成测试必须用 <code>pgvector/pgvector:pg16</code> 镜像——<strong>官方 postgres 镜像不带 pgvector 扩展</strong>，<code>CREATE EXTENSION vector</code> 直接失败。</dd>
+  </dl></div>
+</div>
+
+<div class="tech">
+  <div class="hd"><span class="name">每患者独立 SQLite（PHI 物理隔离）</span><span class="pill p-green">架构决策</span><span class="pill p-red">合规</span></div>
+  <div class="bd"><dl>
+    <dt>它解决什么问题</dt>
+    <dd>检验报告、生命体征、随访提醒、会话记忆属<strong>敏感健康信息（PHI）</strong>。放在共享主库里，一次 SQL 写错或一个越权 bug 就可能导致<strong>跨患者数据串号</strong>。</dd>
+    <dt>为什么「独立库」而不是「主库加字段加密」</dt>
+    <dd>加密解决的是<strong>拖库后的泄露</strong>，解决不了<strong>应用层的越权读取</strong>——应用自己有密钥，越权查询照样能解密出别人的数据。<strong>物理隔离</strong>让「查到别人的数据」在架构上不可能：连接根本不指向那个文件。</dd>
+    <dt>代价（要诚实说）</dt>
+    <dd>① 无法跨患者做聚合分析（如需统计，得走脱敏后的主库指标）；② N 个患者 = N 个文件，备份与迁移更复杂；③ 连接不能复用池。</dd>
+    <dt>💬 面试怎么答</dt>
+    <dd><span class="key">"这是合规驱动架构——先有『PHI 必须隔离』的约束，再倒推出数据分层。加字段加密防的是拖库，防不住应用层越权；物理隔离开的是『串号』这个更大的风险。"</span></dd>
+  </dl></div>
+</div>
+
+<div class="tech">
+  <div class="hd"><span class="name">pgvector</span><span class="pill p-accent">向量检索</span></div>
+  <div class="bd"><dl>
+    <dt>为什么是它，而不是 Milvus / Qdrant / Chroma</dt>
+    <dd>
+      <table style="margin:6px 0">
+        <tr><th style="width:18%">方案</th><th>差别</th></tr>
+        <tr><td><strong>pgvector</strong></td><td><strong>PG 扩展</strong>，向量与业务数据同库同事务。规模在百万级以内、QPS 不高时完全够用，<strong>运维成本最低</strong>——不用再维护一套分布式系统与它的数据同步。</td></tr>
+        <tr><td>Milvus / Qdrant</td><td>为<strong>亿级向量、高 QPS</strong> 设计，支持更复杂的索引与分布式。但引入<strong>额外运维负担 + 数据双写一致性</strong>问题。本项目知识库仅 <strong>64 条</strong>（dept_map 18 / hospital 12 / disease 12 / guideline 7 / dept 6 / differential 3 / enterprise 3 / labref 2 / triage 1），用它是杀鸡用牛刀。</td></tr>
+        <tr><td>Chroma</td><td>轻量嵌入式，适合原型，<strong>生产特性（权限、备份、HA）弱</strong>。</td></tr>
+      </table>
+    </dd>
+    <dt>本项目怎么用</dt>
+    <dd><code>knowledge_documents</code> 表，<code>vector(384)</code> + <strong>HNSW 余弦索引</strong>；检索失败回退内存关键词打分（保证 DB 禁用时 RAG 不整體失效）。</dd>
+    <dt>什么时候该换</dt>
+    <dd>向量量级到千万、或 QPS 到数百、或需要多租户强隔离检索时，再迁 Milvus/Qdrant——接口已收敛在 <code>src/kb.py</code>，替换成本可控。<strong>这也是把检索封装成一个模块的价值。</strong></dd>
+  </dl></div>
+</div>
+
+<div class="tech">
+  <div class="hd"><span class="name">SQLAlchemy 2.0 + Alembic</span><span class="pill p-accent">ORM / 迁移</span></div>
+  <div class="bd"><dl>
+    <dt>为什么是 SQLAlchemy 而不是裸 SQL / Django ORM</dt>
+    <dd>裸 SQL 拼串是<strong>注入风险 + 无类型约束</strong>；Django ORM 与 Django 强绑定（本项目是 FastAPI）。SQLAlchemy 2.0 的 <code>mapped_column</code> / <code>select()</code> 风格有<strong>完整类型标注</strong>，配合 <code>TypeDecorator</code> 还能做透明加密。</dd>
+    <dt>为什么必须有 Alembic</dt>
+    <dd><code>create_all</code> 只能「从零建库」，没法表达<strong>演进</strong>：加列、回填、改约束、回滚。生产环境 schema 必须有版本号、可回滚、可重复执行。</dd>
+    <dt>⚠️ 两个真坑</dt>
+    <dd>
+      ① <strong>autogenerate 遇到自定义类型会生成 <code>src.phi.EncryptedText()</code> 却不加 import</strong>，跑迁移直接 <code>NameError</code>。<strong>修法：迁移里写底层物理类型 <code>sa.Text()</code></strong>——TypeDecorator 是应用层关注点，schema 层面就是 TEXT。<br>
+      ② <strong>方言差异</strong>：pgvector 扩展 / HNSW 索引要跳过非 PG 方言；SQLite 改约束必须走 <code>batch_alter_table</code>。本项目在 <code>alembic/env.py</code> 的 <code>include_object</code> 里做方言感知排除。
+    </dd>
+    <dt>💬 面试怎么答</dt>
+    <dd><span class="key">"CI 里跑 alembic check 阻断模型与迁移漂移。但我要强调：alembic check 只比『ORM 模型 vs 迁移』，它永远发现不了『库里多了不该有的表』——我就是靠它之外的检查才发现主库混进了 5 张患者私有表。"</span></dd>
+  </dl></div>
+</div>
+
+<!-- ============ 安全合规 ============ -->
+<h3 id="ch3c">3.C 安全与合规</h3>
+
+<div class="tech">
+  <div class="hd"><span class="name">JWT + RBAC + token_version</span><span class="pill p-red">鉴权</span></div>
+  <div class="bd"><dl>
+    <dt>为什么是 JWT 而不是 Session</dt>
+    <dd>Session 要服务端存状态，<strong>水平扩展需共享存储（Redis）</strong>；JWT 无状态，天然适配多副本。代价是<strong>无法即时吊销</strong>——本项目用 <code>token_version</code> 字段补上：登出/改密即 bump，所有旧令牌当场失效。</dd>
+    <dt>为什么不用完整 OAuth2 / OIDC</dt>
+    <dd>院内系统通常已有统一身份源，本项目自建账号体系是为<strong>可独立运行演示</strong>。生产可把 <code>auth.py</code> 换成对接院内 SSO——接口已收敛。</dd>
+    <dt>为什么密码用 PBKDF2 而不是 bcrypt / Argon2</dt>
+    <dd>Argon2 抗 ASIC 最强，但需额外依赖；<strong>PBKDF2 在标准库里</strong>（<code>hashlib.pbkdf2_hmac</code>），零依赖且合规可接受。本项目 60 万次迭代。<strong>权衡依据是"零依赖"而非"最优算法"</strong>——面试时要说清这是有理由的取舍，不是不知道 Argon2。</dd>
+    <dt>⚠️ 性能影响</dt>
+    <dd>PBKDF2 60 万次下登录 p50 约 85ms，是压测中<strong>登录接口的主要耗时来源</strong>。这是刻意的——<strong>慢哈希就是要慢</strong>，防离线爆破。</dd>
+  </dl></div>
+</div>
+
+<div class="tech">
+  <div class="hd"><span class="name">EncryptedText（透明列加密）</span><span class="pill p-red">PHI</span></div>
+  <div class="bd"><dl>
+    <dt>为什么用应用层 TypeDecorator 而不是数据库 TDE</dt>
+    <dd>① <strong>无额外组件</strong>（PG 原生无 TDE）；② <strong>底层仍是 TEXT</strong>，无需改 schema，存量明文可平滑过渡；③ 换库（如换云厂商）不影响。</dd>
+    <dt>为什么用 Fernet 而不是裸 AES</dt>
+    <dd>Fernet 自带<strong>认证加密（AEAD）+ 时间戳 + 版本前缀</strong>，避免自己拼 IV/认证标签出错——<strong>密码学最忌讳自己组装原语</strong>。无依赖时降级到 XOR + HMAC（演示用，明确标注非生产）。</dd>
+    <dt>关键设计：密钥缺失 fail-closed</dt>
+    <dd>启动即拒绝，<strong>杜绝「配置漏了却悄悄明文落盘」</strong>——静默降级比直接崩溃危险得多。</dd>
+    <dt>💬 面试怎么答</dt>
+    <dd><span class="key">"选 Fernet 不选裸 AES，是因为它自带认证加密和时间戳；密码学不该自己拼原语。另外密钥缺失我让它拒绝启动而不是降级——静默的失败比崩溃危险。"</span></dd>
+  </dl></div>
+</div>
+
+<div class="tech">
+  <div class="hd"><span class="name">OLP 对象级授权</span><span class="pill p-green">核心安全</span></div>
+  <div class="bd"><dl>
+    <dt>它解决什么问题</dt>
+    <dd>「你能不能调用这个工具」（RBAC）和「你能不能访问<strong>这条数据</strong>」（OLP）是两回事。只有 RBAC 就会出现经典越权：<strong>患者 A 传 patient_id=B 就能读 B 的病历</strong>。</dd>
+    <dt>本项目的做法</dt>
+    <dd><strong>工具 schema 里根本没有 <code>patient_id</code>/<code>tenant_id</code> 参数</strong>。身份只从 JWT（<code>_require_patient()</code>）与受控请求头（<code>X-Tenant-Id</code>）取。<strong>模型就算被注入也传不出这个参数</strong>——参数不存在，无从伪造。</dd>
+    <dt>为什么这比"校验传入的 id"更强</dt>
+    <dd>校验是<strong>黑名单思路</strong>（每次都要记得校验，漏一处就出事）；不暴露参数是<strong>白名单思路</strong>（默认就拿不到）。<code>tests/test_security_isolation.py</code> 有 22 项越权 PoC 回归把这条钉死。</dd>
+  </dl></div>
+</div>
+
+<!-- ============ 可靠性 ============ -->
+<h3 id="ch3d">3.D 可靠性与韧性</h3>
+
+<div class="tech">
+  <div class="hd"><span class="name">重试 · 熔断 · kill switch（三者分工）</span><span class="pill p-amber">韧性</span><span class="pill p-green">高频考点</span></div>
+  <div class="bd"><dl>
+    <dt>为什么三个都要，不是一个顶替</dt>
+    <dd>
+      <table style="margin:6px 0">
+        <tr><th style="width:16%">机制</th><th>治什么</th><th>不管会怎样</th></tr>
+        <tr><td><strong>重试</strong></td><td><strong>瞬时</strong>故障（网络抖动、偶发 502）</td><td>偶发抖动变成用户可见的错误</td></tr>
+        <tr><td><strong>熔断</strong></td><td><strong>持续</strong>故障（依赖真挂了）</td><td><strong>重试叠加超时 → 协程耗尽 → 雪崩</strong></td></tr>
+        <tr><td><strong>kill switch</strong></td><td><strong>计划内</strong>摘流量（下游维护/宕机）</td><td>只能发版才能停用，恢复成本高</td></tr>
+      </table>
+    </dd>
+    <dt>关键认知</dt>
+    <dd>熔断 OPEN 态<strong>快速失败</strong>（不再等待超时），这是保护动作。<strong>所以先看熔断状态别急着复位</strong>——没确认依赖恢复就复位，等于让流量重新冲击故障依赖。</dd>
+    <dt>降级的安全底线</dt>
+    <dd>降级路径<strong>绝不编造</strong>：LLM 挂了返回明确兜底话术并引导就医，而不是让模型瞎编一个答案。<strong>宁可"不可用"，不可"不可信"。</strong></dd>
+    <dt>💬 面试怎么答</dt>
+    <dd><span class="key">"retry 治抖动、breaker 治雪崩，两者不是替代关系——如果只有重试，依赖真挂了时每次重试都在堆超时，协程很快耗尽，单点的故障会顺着调用链放大成全站不可用。"</span></dd>
+  </dl></div>
+</div>
+
+<div class="tech">
+  <div class="hd"><span class="name">幂等键 + 原子 UPDATE</span><span class="pill p-amber">一致性</span></div>
+  <div class="bd"><dl>
+    <dt>幂等键解决什么</dt>
+    <dd>网络重试 / 上游重放导致<strong>重复锁号、重复发信</strong>。写操作以「用户+动作+参数」生成稳定 key，TTL 内重复调用直接返回首次结果。</dd>
+    <dt>为什么号源用原子 UPDATE 而不是「读-改-写」</dt>
+    <dd><code>SELECT booked_slots</code> → <code>+1</code> → <code>UPDATE</code> 在并发下<strong>会丢更新导致超卖</strong>。本项目用 <code>UPDATE … SET booked_slots = booked_slots + 1 WHERE id=:sid AND booked_slots &lt; total_slots</code>，靠 <code>rowcount</code> 判定是否占位成功。</dd>
+  </dl></div>
+</div>
+
+<!-- ============ 可观测 ============ -->
+<h3 id="ch3e">3.E 可观测性与成本</h3>
+
+<div class="tech">
+  <div class="hd"><span class="name">OpenTelemetry</span><span class="pill p-accent">链路</span></div>
+  <div class="bd"><dl>
+    <dt>为什么不自研埋点</dt>
+    <dd>自研要自己解决：跨服务传播（W3C traceparent）、采样、导出、与后端（Jaeger/Zipkin/Tempo）对接。<strong>OTel 是厂商中立的既定标准</strong>——换后端只改 exporter，不用改代码。</dd>
+    <dt>本项目怎么用</dt>
+    <dd>一次问诊串成 <code>chat.turn → supervisor.classify → agent.&lt;intent&gt; → tool.call / llm.invoke</code> 的 span 树，trace-id 可粘进 Jaeger 回放。<strong>未装包时降级为 no-op</strong>（不因观测缺失而启动失败）。</dd>
+    <dt>刻意的取舍</dt>
+    <dd>默认关闭。实测开启后开销<strong>低于测量噪声</strong>（未做多轮交替取中位数，属已知局限）。</dd>
+  </dl></div>
+</div>
+
+<div class="tech">
+  <div class="hd"><span class="name">Prometheus + Alertmanager + Grafana</span><span class="pill p-accent">监控告警</span></div>
+  <div class="bd"><dl>
+    <dt>为什么是 Prometheus 而不是云监控 / ELK</dt>
+    <dd>① <strong>Pull 模型</strong>：不用在应用里配监控后端地址，加副本自动被发现；② <strong>PromQL</strong> 表达力强；③ <strong>开源可本地跑</strong>，个人项目零成本；④ 生态（Alertmanager/Grafana/exporter）成熟。云监控的问题是<strong>锁定厂商 + 本地无法验证</strong>。</dd>
+    <dt>⚠️ 指标设计的两个坑（很能体现功力）</dt>
+    <dd>
+      ① <strong>高基数标签</strong>：HTTP 指标按<strong>路由模板</strong>统计（<code>/api/…/{id}</code>），若按真实 path 会产生无限标签值拖垮 TSDB。<br>
+      ② <strong>患者维度不进 TSDB</strong>：LLM 成本的患者维度只做进程内分账，由 <code>/api/admin/cost</code> 聚合；进 TSDB 的只有低基数 <code>(agent, model, kind)</code>。
+    </dd>
+    <dt>首字节延迟为何单独统计</dt>
+    <dd>端到端耗时相同的情况下，<strong>「1 秒出第一个字然后流式输出」和「干等 4 秒后一次性返回」体验天差地别</strong>。首字节延迟才是患者真实体感。</dd>
+    <dt>告警闭环</dt>
+    <dd>9 条规则按 critical/warning/info 分级路由（触达 10s/1m/5m，重复 30m/4h/24h）+ <strong>抑制规则</strong>（critical 抑制同告警名的低级别，防告警风暴）。<strong>每条告警的 <code>runbook_url</code> 直指 docs/RUNBOOK.md 对应章节。</strong></dd>
+    <dt>⚠️ 为什么需要本地接收端</dt>
+    <dd>原先 receiver 是 <code>null</code> 占位——栈能起但<strong>告警哪儿也去不了</strong>。现在随栈拉起纯标准库接收端 <code>alert-sink</code>，手工 POST 一条告警即可验证「确实发出去了」；生产版用 <code>url_file</code> 引用企业 IM 密钥（webhook 里的 key 是凭证，绝不入库）。</dd>
+    <dt>💬 面试怎么答</dt>
+    <dd><span class="key">"配置里写了 receiver 不等于告警能送达——我最初也是 null 占位。所以我加了个本地接收端，能证明链路真的通；生产用 url_file 引密钥，因为企微机器人的 key 本身就是凭证。"</span></dd>
+  </dl></div>
+</div>
+
+<!-- ============ 交付运维 ============ -->
+<h3 id="ch3f">3.F 交付与运维</h3>
+
+<div class="tech">
+  <div class="hd"><span class="name">Docker + Helm</span><span class="pill p-purple">交付</span></div>
+  <div class="bd"><dl>
+    <dt>为什么用 Helm 而不是裸 kubectl apply / Kustomize</dt>
+    <dd>
+      <table style="margin:6px 0">
+        <tr><th style="width:20%">方案</th><th>差别</th></tr>
+        <tr><td>裸 <code>kubectl apply</code></td><td>无法参数化，多环境靠复制粘贴 YAML，<strong>没有版本与回滚</strong>。</td></tr>
+        <tr><td><strong>Helm</strong></td><td><strong>模板 + values 参数化 + release 版本 + <code>helm rollback</code></strong>。三套环境共用一套模板，只换 values。</td></tr>
+        <tr><td>Kustomize</td><td>overlay 补丁式，无模板引擎（更安全但表达力弱），<strong>无 release 历史</strong>，回滚要靠 Git。</td></tr>
+      </table>
+    </dd>
+    <dt>⚠️ 踩过的坑（只有真跑 helm 才能发现）</dt>
+    <dd><code>readOnlyRootFilesystem</code> / <code>capabilities</code> 是<strong>容器级</strong>字段，写进 Pod 级 <code>securityContext</code> 会被 API Server 判 unknown field 拒绝部署。<strong>YAML 语法解析和 alembic check 都查不出来，只有 <code>helm template</code>/<code>lint</code> 能暴露。</strong></dd>
+    <dt>安全设计</dt>
+    <dd>ConfigMap/Secret 分离、<code>envFrom.secretRef</code> 缺失即 <strong>fail-closed</strong>、非 root（uid 10001）+ 只读根文件系统 + drop ALL capabilities。</dd>
+  </dl></div>
+</div>
+
+<div class="tech">
+  <div class="hd"><span class="name">GitHub Actions（CI）· ArgoCD（GitOps）</span><span class="pill p-purple">流水线</span></div>
+  <div class="bd"><dl>
+    <dt>为什么用 GitHub Actions 而不是 Jenkins / GitLab CI</dt>
+    <dd>与仓库同址、零运维、<strong>矩阵构建</strong>开箱即用（本项目跑 3.11/3.12/3.13）。Jenkins 需自建与维护主从，GitLab CI 需 GitLab。个人/小团队项目 GH Actions 成本最低。</dd>
+    <dt>推模式 vs 拉模式（GitOps）</dt>
+    <dd>
+      <strong>推模式</strong>（<code>cd.yml</code>）：CI 拿 kubeconfig 直接 <code>helm upgrade</code>——简单，但 <strong>CI 需要集群写权限</strong>，凭证泄露风险高。<br>
+      <strong>拉模式</strong>（ArgoCD）：集群内 Agent 监听 Git，发现期望状态变化自动同步——<strong>CI 不需要任何集群凭证</strong>，Git 是唯一事实源。<br>
+      医疗系统更推荐拉模式：<strong>CI 凭证泄露不会直接导致集群被改</strong>，且任何线上变更都有 Git 提交可追溯。
+    </dd>
+    <dt>镜像 tag 为什么用 git SHA 而不是 latest</dt>
+    <dd><code>latest</code> 无法回答「线上跑的是哪个 commit」。<strong>按 SHA 打标 + 三环境 values</strong>，回滚时能精确定位到上一个版本。</dd>
+  </dl></div>
+</div>
+
+<!-- ============ 前端与工程 ============ -->
+<h3 id="ch3g">3.G 前端与工程效能</h3>
+
+<div class="tech">
+  <div class="hd"><span class="name">FastAPI + SSE</span><span class="pill p-accent">接入层</span></div>
+  <div class="bd"><dl>
+    <dt>为什么是 FastAPI 而不是 Flask / Django</dt>
+    <dd>① <strong>原生 async</strong>——Agent 链路大量 I/O 等待 LLM，同步框架要靠线程池硬扛；② <strong>Pydantic 校验</strong>自动生成 OpenAPI；③ 依赖注入系统天然适配本项目（鉴权、租户解析都做成 <code>Depends</code>）。Django 偏全栈 MVC，用它只做 API 太重。</dd>
+    <dt>为什么用 SSE 而不是 WebSocket / 轮询</dt>
+    <dd>
+      <table style="margin:6px 0">
+        <tr><th style="width:20%">方案</th><th>差别</th></tr>
+        <tr><td><strong>SSE</strong></td><td><strong>单向</strong>（服务端→客户端）但本项目只需要这个方向：LLM token 流式吐出。<strong>基于普通 HTTP</strong>，天然穿过代理/CDP，断线自动重连，实现简单。</td></tr>
+        <tr><td>WebSocket</td><td>双向，能力更强但<strong>协议升级、代理穿透、心跳重连都要自己处理</strong>——对单向流式是过度设计。</td></tr>
+        <tr><td>轮询</td><td>延迟与请求量不可兼得，浪费资源。</td></tr>
+      </table>
+    </dd>
+  </dl></div>
+</div>
+
+<div class="tech">
+  <div class="hd"><span class="name">Vite + 原生 ES 模块（不引 React/Vue）</span><span class="pill p-purple">前端</span></div>
+  <div class="bd"><dl>
+    <dt>为什么刻意不引框架</dt>
+    <dd>前端只是 <strong>Agent 的演示入口与病历可视化</strong>，交互复杂度低。引 React/Vue 会：增加体积与构建复杂度、<strong>扩大攻击面</strong>（依赖供应链）、在严格 CSP 下还要额外处理。Vite + 原生 ES 已满足「构建 / 组件化 / E2E」三件事。</dd>
+    <dt>为什么用 Vite 而不是 webpack / CRA</dt>
+    <dd>Vite 开发态走<strong>原生 ESM，无需打包</strong>，冷启动秒级；生产用 Rollup 打包。CRA 已停止维护，webpack 配置成本高。</dd>
+    <dt>严格 CSP 下怎么用构建工具（值得单独讲）</dt>
+    <dd>网关<strong>同源托管 <code>dist/</code> 并挂载 <code>/assets</code></strong>——同源模块脚本由 <code>'self'</code> 放行，<strong>仅内联脚本需要 nonce</strong>。这样既享受构建产物，又不破坏 CSP。<strong>如果为了图省事把 CSP 放宽成 <code>unsafe-inline</code>，那才是真的失分。</strong></dd>
+    <dt>为什么 E2E 用 Playwright 而不是 Selenium / Cypress</dt>
+    <dd>Playwright 自带浏览器驱动（无需 WebDriver 管理）、<strong>多浏览器、自动等待</strong>大幅减少 flaky。Selenium 配置繁琐；Cypress 只支持 Chromium 系且商业版才有部分能力。</dd>
+  </dl></div>
+</div>
+
+<div class="tech">
+  <div class="hd"><span class="name">ruff + pytest</span><span class="pill p-gray">工程门禁</span></div>
+  <div class="bd"><dl>
+    <dt>为什么用 ruff 而不是 flake8 + black + isort</dt>
+    <dd><strong>一个工具、Rust 实现、快一个量级</strong>，同时覆盖 lint + format + import 排序。三件套要维护三份配置且互相可能冲突。CI 里 <code>ruff check</code> / <code>ruff format --check</code> 两道门禁。</dd>
+    <dt>⚠️ 测试踩坑（很能体现工程能力）</dt>
+    <dd>测试「只能跑一次」——第二次跑挂 5 处，根因是<strong>四类运行时状态跨用例残留</strong>：幂等键、号源占用、账号锁定计数、token_version。解法：autouse fixture 重置可重建状态 + <code>MC_TEST_DB</code> 环境变量护栏<strong>防止误跑业务库</strong>。</dd>
+    <dt>另一个坑</dt>
+    <dd>别用 <code>grep -c "def test_"</code> 数用例——<strong>会漏掉参数化</strong>。要数实际收集量用 <code>pytest --co -q</code>。</dd>
+  </dl></div>
+</div>
+
+<!-- ============ 设计决策 ============ -->
+<h2 id="ch4">④ 关键设计决策（为什么这么做）</h2>
+<div class="callout">
+  <span class="t">这一节比技术栈本身值钱</span>
+  面试官问「为什么」时，<strong>决策理由比技术名词重要</strong>。下面每条都配了「可以对比着讲的反例」。
+</div>
+<table>
+  <tr><th style="width:26%">决策</th><th>为什么</th><th style="width:26%">可对比讲的</th></tr>
+  <tr><td><strong>PHI 放独立 SQLite</strong></td><td>合规驱动：让「跨患者串号」物理上不可能</td><td>加密防拖库，防不住应用层越权</td></tr>
+  <tr><td><strong>工具 schema 不含 patient_id</strong></td><td>白名单思路：参数不存在，注入也伪造不了</td><td>校验传入 id 是黑名单，漏一处就出事</td></tr>
+  <tr><td><strong>租户用 contextvars</strong></td><td>async 下 thread-local 会串号；ToolNode 在独立任务需重设</td><td>逐层传参会污染所有工具签名</td></tr>
+  <tr><td><strong>加密用 TypeDecorator</strong></td><td>底层仍是 TEXT，无需迁移，存量明文兼容</td><td>改 schema 要做数据迁移</td></tr>
+  <tr><td><strong>密钥缺失 fail-closed</strong></td><td>拒绝启动，杜绝「配置漏了却明文落盘」</td><td>静默降级比崩溃危险得多</td></tr>
+  <tr><td><strong>熔断与重试分开</strong></td><td>retry 治抖动、breaker 治雪崩</td><td>只有重试 → 超时叠加 → 协程耗尽</td></tr>
+  <tr><td><strong>Prometheus 不记患者维度</strong></td><td>高基数会拖垮 TSDB</td><td>患者维度走进程内 ledger + API 聚合</td></tr>
+  <tr><td><strong>幻觉判定不用 LLM 裁判</strong></td><td>用未验证系统验证另一个系统，分数会漂移</td><td>判定规则写死，谁跑结果都一样</td></tr>
+  <tr><td><strong>给检测器本身写测试</strong></td><td>一个永远通过的指标没有价值</td><td>注入编造回答验证抓得到</td></tr>
+  <tr><td><strong>反馈闭环必须经 HITL</strong></td><td>患者反馈是信号不是真理；自动改医学知识 = 把「什么是对的」交给会漂移的系统</td><td>提案与落地分两步，测试钉死 PENDING 不得提前写入</td></tr>
+  <tr><td><strong>多模态不做假实现</strong></td><td>无模型/语料/临床验证，医疗场景的"玩具"比没有更危险</td><td>交付契约 + 明确「不支持」语义</td></tr>
+  <tr><td><strong>users 不加 tenant_id</strong></td><td>患者可跨院区就诊，切分账号会导致重复建档、病历碎片化</td><td>建模判断，已用测试固化</td></tr>
+  <tr><td><strong>患者端检查单不按租户过滤</strong></td><td>患者身份全局，应能看到自己在各院区的全部记录</td><td>OLP（只能看自己的）已足够</td></tr>
+  <tr><td><strong>前端不引框架</strong></td><td>只是演示入口，引框架只增体积与攻击面</td><td>严格 CSP 下用构建工具的正确姿势</td></tr>
+</table>
+
+<!-- ============ 面试问答 ============ -->
+<h2 id="ch5">⑤ 面试问答 36 题</h2>
+<p style="color:var(--ink-3);font-size:13px">点开看答案。建议先自己答，再对照——<strong>答不上来的说明还没真正理解，回去看第 3 章对应技术。</strong></p>
+
+<h3>A. 架构与选型（8 题）</h3>
+
+<details><summary>Q1. 为什么用 LangGraph 而不是 LangChain 原生 AgentExecutor？</summary>
+<div class="ans">
+  <p>AgentExecutor 本质是「while 循环 + 工具调用」的<strong>黑盒</strong>：状态不可控、不可中断、不可回放。我需要的是<strong>能中断、能恢复、能回放、跨重启不丢</strong>的状态机。</p>
+  <p>具体差异：LangGraph 把流程建模成图，<code>interrupt()</code> 是一等公民（天然支持 HITL），checkpointer 负责状态持久化。医疗场景的敏感操作（挂号、医保结算）<strong>必须有人工审批</strong>，这不是可选项。</p>
+  <span class="key">"审批状态如果只存在内存里，服务一重启患者的挂号就凭空消失了——这在医疗场景不可接受。所以我用 Postgres checkpointer，重启后照常恢复。"</span>
+</div></details>
+
+<details><summary>Q2. 为什么是中枢辐射而不是多 Agent 自由协作？</summary>
+<div class="ans">
+  <p>CrewAI/AutoGen 那类<strong>多 Agent 自由对话</strong>很灵活，但流程不可预测。医疗场景要的是<strong>确定性</strong>：该审批的必须审批，该拦截的必须拦截。</p>
+  <p>中枢辐射（supervisor 统一分发）换来三点：意图可审计、工具权限可按 Agent 收敛、新 Agent 接入不影响既有链路。</p>
+</div></details>
+
+<details><summary>Q3. 数据库为什么三层（主库 + 患者私有库 + 向量库）？</summary>
+<div class="ans">
+  <p>不是炫技，是<strong>合规倒逼</strong>：PHI 必须隔离 → 患者私有库；业务需要事务与关系约束 → 主库；语义检索 → 向量库。每层<strong>诉求不同</strong>，硬塞一层会互相妥协。</p>
+  <p>代价要诚实说：无法跨患者聚合分析、N 个患者 N 个文件使备份变复杂、连接不能复用池。</p>
+  <span class="key">"加密解决的是拖库后的泄露，解决不了应用层越权读取——应用自己有密钥。物理隔离让『查到别人的数据』在架构上不可能。"</span>
+</div></details>
+
+<details><summary>Q4. 为什么用 pgvector 而不是 Milvus / Qdrant？</summary>
+<div class="ans">
+  <p>规模决定选型。本项目知识库 <strong>64 条</strong>，pgvector 完全够用，且<strong>向量与业务数据同库同事务</strong>，省掉一套分布式系统和它的<strong>数据双写一致性</strong>问题。</p>
+  <p>迁移信号：向量到千万级、QPS 到数百、或需要多租户强隔离检索时再换。接口已收敛在 <code>src/kb.py</code>，替换成本可控——<strong>这也是封装的价值</strong>。</p>
+</div></details>
+
+<details><summary>Q5. 为什么用 FastAPI 而不是 Flask / Django？</summary>
+<div class="ans">
+  <p>① <strong>原生 async</strong>：Agent 链路大量等待 LLM，同步框架要靠线程池硬扛；② <strong>Pydantic 自动校验 + OpenAPI</strong>；③ <strong>依赖注入</strong>天然适配——本项目的鉴权与租户解析都做成 <code>Depends</code>。</p>
+  <p>Django 是偏全栈的 MVC，只用来做 API 太重，ORM 也与 SQLAlchemy 栈重复。</p>
+</div></details>
+
+<details><summary>Q6. 流式输出为什么用 SSE 而不是 WebSocket？</summary>
+<div class="ans">
+  <p>SSE <strong>单向</strong>（服务端→客户端），而这正是我唯一需要的方向——LLM token 流式吐出。它基于普通 HTTP，<strong>天然穿透代理/CDN、断线自动重连</strong>。</p>
+  <p>WebSocket 是双向的，能力更强但<strong>协议升级、代理穿透、心跳重连都要自己处理</strong>——对单向流式是过度设计。</p>
+</div></details>
+
+<details><summary>Q7. 前端为什么不引 React/Vue？</summary>
+<div class="ans">
+  <p>前端只是 Agent 的演示入口与病历可视化，<strong>交互复杂度低</strong>。引框架会增加体积与构建复杂度、扩大<strong>依赖供应链攻击面</strong>，在严格 CSP 下还要额外处理。</p>
+  <p>Vite + 原生 ES 已满足「构建 / 组件化 / E2E」三件事。共享逻辑抽到 <code>client/src/shared/</code>（api/dom/state/constants/csp-events），消除重复。</p>
+  <span class="key">"严格 CSP 下我用构建工具的正确姿势：网关同源托管 dist/ 并挂载 /assets，同源模块脚本由 'self' 放行，只有内联脚本需要 nonce。如果为了图省事把 CSP 放宽成 unsafe-inline，那才是真的失分。"</span>
+</div></details>
+
+<details><summary>Q8. 为什么多租户用 contextvars 而不是 thread-local？</summary>
+<div class="ans">
+  <p><strong>async 下 thread-local 会串号</strong>——一个 asyncio 线程里跑着多个请求的协程，thread-local 是线程级而非任务级隔离。contextvars 是<strong>任务级</strong>，正是 asyncio 的设计配套。</p>
+  <p>但有个坑：<strong>LangGraph 的 ToolNode 在独立异步任务里执行，context 不会自动继承</strong>。所以我在 agent 节点里从 graph state 重新 <code>set()</code>，让它跨任务边界存活。</p>
+  <span class="key">"这个坑只有真跑了才发现——你看代码它明明 set 了，但工具里读出来是 None。"</span>
+</div></details>
+
+<h3>B. 安全与合规（7 题）</h3>
+
+<details><summary>Q9. 怎么防止患者越权读别人的病历？</summary>
+<div class="ans">
+  <p>核心是 <strong>OLP（对象级授权）</strong>：<strong>工具 schema 里根本没有 <code>patient_id</code> 参数</strong>。身份只从 JWT 取（<code>_require_patient()</code>）。</p>
+  <p>这比「校验传入的 id」强，因为：<strong>校验是黑名单思路</strong>（每次都要记得校验，漏一处就出事）；<strong>不暴露参数是白名单思路</strong>（模型就算被注入也传不出这个参数——参数不存在）。</p>
+  <p>thread_id 派生为 <code>{role}:{sub}:{client_tid}</code>，防跨患者会话越权。<code>tests/test_security_isolation.py</code> 有 <strong>22 项越权 PoC 回归</strong>。</p>
+</div></details>
+
+<details><summary>Q10. RBAC 和 OLP 的区别？</summary>
+<div class="ans">
+  <p><strong>RBAC</strong> 回答「你能不能调用这个工具」（角色维度）；<strong>OLP</strong> 回答「你能不能访问<strong>这条</strong>数据」（对象维度）。</p>
+  <p>只有 RBAC 就会出现经典越权：医护角色合法，但传个别人的 patient_id 就能读任何人的病历。本项目患者访问医护端点会被 403（RBAC），医护读患者病历还要走归属校验（OLP）。</p>
+</div></details>
+
+<details><summary>Q11. PHI 加密为什么用应用层 TypeDecorator 而不是数据库 TDE？</summary>
+<div class="ans">
+  <p>① PostgreSQL 原生<strong>没有 TDE</strong>；② TypeDecorator 让<strong>底层仍是 TEXT</strong>，无需改 schema，<strong>存量明文可平滑过渡</strong>；③ 换库（换云厂商）不影响。</p>
+  <p>密钥用 Fernet（<strong>自带认证加密 AEAD + 时间戳 + 版本前缀</strong>），而不是自己拼 AES 的 IV/认证标签——<strong>密码学最忌讳自己组装原语</strong>。</p>
+</div></details>
+
+<details><summary>Q12. 加密密钥没配置会怎样？</summary>
+<div class="ans">
+  <p><strong>拒绝启动（fail-closed）</strong>，而不是降级为明文存储。</p>
+  <p>理由：<strong>静默的失败比崩溃危险得多</strong>。如果配置漏了系统还照常跑，PHI 就悄悄以明文落盘且无人知晓——这种"看起来正常"的状态在医疗场景是不可接受的。</p>
+  <span class="key">"这和镜像 compose 里 ${VAR:?} 是同一个理念：缺关键配置就该炸，不该猜一个默认值继续跑。"</span>
+</div></details>
+
+<details><summary>Q13. 患者要求删除全部数据怎么处理？</summary>
+<div class="ans">
+  <p><code>erase_patient</code>：抹除主库记录 + 删除患者私有 SQLite 文件 + <strong>审计日志做盐哈希假名化</strong>（保留可追溯但不再存明文标识符），对应 GDPR 第 17 条 / 个保法第 47 条。</p>
+  <p>关键细节：<strong>不直接删审计日志</strong>。合规要求审计留痕，但又不能保留明文标识符——所以用<strong>假名化</strong>而非删除，两头都满足。</p>
+  <p>操作上要求<strong>双人复核</strong>，不可逆。</p>
+</div></details>
+
+<details><summary>Q14. 患者同意书之后改版了怎么办？</summary>
+<div class="ans">
+  <p><code>consent_records</code> 记录 <code>consent_version</code>，文案升级后<strong>旧版本签署者需重新同意</strong>，对话前拦截并返回 <code>consent_required</code>。</p>
+</div></details>
+
+<details><summary>Q15. 为什么密码用 PBKDF2 而不是 Argon2？</summary>
+<div class="ans">
+  <p>诚实回答：Argon2 抗 ASIC 最强，但<strong>需要额外依赖</strong>；PBKDF2 在<strong>标准库</strong>里（<code>hashlib.pbkdf2_hmac</code>），零依赖且合规可接受，本项目 60 万次迭代。</p>
+  <p>这是<strong>有理由的取舍，不是不知道 Argon2</strong>——面试时要说清权衡依据。另外要主动提代价：PBKDF2 60 万次下登录 p50 约 85ms，是压测中登录接口的主要耗时来源，但<strong>慢哈希就是要慢</strong>，防离线爆破。</p>
+</div></details>
+
+<h3>C. 可靠性（5 题）</h3>
+
+<details><summary>Q16. 重试和熔断的区别？都有重试了为什么还要熔断？</summary>
+<div class="ans">
+  <p><strong>重试治瞬时故障</strong>（网络抖动、偶发 502）：失败后等一下再试，用户无感。<strong>熔断治持续故障</strong>（依赖真挂了）：OPEN 态快速失败，不再等待超时。</p>
+  <p>如果只有重试，依赖挂了时<strong>每次重试都在叠加超时，协程很快耗尽，单点故障会顺着调用链放大成全站雪崩</strong>。</p>
+  <span class="key">"retry 治抖动、breaker 治雪崩，两者不是替代关系。而且熔断开启是保护动作不是故障本身——所以确认依赖恢复前不要急着复位，否则等于让流量重新冲击故障依赖。"</span>
+</div></details>
+
+<details><summary>Q17. kill switch 和熔断的区别？</summary>
+<div class="ans">
+  <p><strong>熔断是自动的</strong>（失败率超阈值自动触发，恢复后半开探测）；<strong>kill switch 是人工的</strong>（运维主动停用某工具或意图）。</p>
+  <p>kill switch 的价值：<strong>不发版即可摘流量</strong>。比如 HIS/短信网关宕机、或要维护，运维调一下就摘掉，系统自动走安全降级——而发版要走 CI/CD，几分钟到几十分钟。</p>
+  <p>纪律：每次启用都要记工单（谁/何时/为什么/预计何时恢复）。<code>KillSwitchActive</code> 告警存在的意义就是提醒「<strong>别忘了把它开回去</strong>」——持续 5 分钟以上说明功能被静默阉割了。</p>
+</div></details>
+
+<details><summary>Q18. 降级的时候会不会编造答案？</summary>
+<div class="ans">
+  <p><strong>不会，这是硬底线。</strong>降级路径返回的是明确的兜底话术 + 引导就医，<strong>绝不让模型瞎编</strong>。</p>
+  <p>医疗场景里宁可"不可用"，不可"不可信"——患者拿着编造的建议去买药，后果比"稍后再试"严重得多。</p>
+  <p>如果压测/评测中发现兜底输出了具体医学建议，属<strong>严重缺陷</strong>，按 critical 处理并回滚。</p>
+</div></details>
+
+<details><summary>Q19. 号源怎么防超卖？</summary>
+<div class="ans">
+  <p>「读-改-写」（<code>SELECT booked_slots</code> → +1 → <code>UPDATE</code>）在并发下<strong>会丢更新导致超卖</strong>。</p>
+  <p>本项用<strong>原子 UPDATE</strong>：<code>UPDATE doctor_schedules SET booked_slots = booked_slots + 1 WHERE id=:sid AND booked_slots &lt; total_slots</code>，靠 <code>rowcount==1</code> 判定占位成功，失败则尝试下一个候选。条件写在 WHERE 里，<strong>数据库保证原子性</strong>。</p>
+</div></details>
+
+<details><summary>Q20. 网络重试导致重复挂号怎么办？</summary>
+<div class="ans">
+  <p><code>idempotency_keys</code> 表：写操作以「用户+动作+参数」生成<strong>稳定 key</strong>，TTL（默认 1h）内重复调用<strong>直接返回首次结果</strong>。</p>
+  <p>关键点：<code>func</code> <strong>执行成功才登记 key</strong>；抛异常不登记，允许上层重试。这样网络重试/上游重放不会重复锁号、重复发信。</p>
+</div></details>
+
+<h3>D. 可观测性与成本（5 题）</h3>
+
+<details><summary>Q21. 怎么保证不幻觉？</summary>
+<div class="ans">
+  <p>先讲度量，再讲防护。</p>
+  <p><strong>度量</strong>：用「<strong>可回答 / 不可回答</strong>」配对法。给模型一段资料，一半问题答案在资料里（考抽取），一半不在（考它敢不敢承认不知道）。<strong>资料里没有答案却给出具体数字且没承认不知道 → 计为幻觉。</strong></p>
+  <p><strong>关键判断：不引入 LLM 当裁判</strong>——那等于用未经验证的系统验证另一个系统，评分会漂移、不可复现。判定规则写死在代码里。</p>
+  <p><strong>真实数字</strong>：本地 qwen2.5:1.5b 接地 100%/幻觉 0%，但<strong>越界拒答只有 66.7%</strong>（在"帮我开降压药"用例上加了免责声明却仍枚举 ACE 抑制剂等具体药类）；deepseek-chat 三项全 100%。</p>
+  <span class="key">"我还给检测器本身写了测试——注入人工构造的编造回答，验证它抓得到。一个永远通过的指标是没有价值的指标。而且现在 10 条用例两个模型都满分，说明存在天花板效应，评测集还要扩。"</span>
+</div></details>
+
+<details><summary>Q22. Prometheus 指标设计有什么坑？</summary>
+<div class="ans">
+  <p><strong>高基数标签</strong>。两个具体处理：</p>
+  <p>① HTTP 指标按<strong>路由模板</strong>统计（<code>/api/…/{id}</code>），不是真实 path——否则 path 参数会产生无限标签值，<strong>拖垮 TSDB</strong>。</p>
+  <p>② <strong>LLM 成本的患者维度不进 TSDB</strong>：每个患者一个时间序列，患者一多就爆。只在进程内 ledger 分账，由 <code>/api/admin/cost</code> 聚合；进 TSDB 的只有低基数 <code>(agent, model, kind)</code>。</p>
+  <p>还有一个细节：首字节延迟与端到端耗时<strong>分开统计</strong>——「1 秒出第一个字然后流式输出」和「干等 4 秒一次性返回」体验天差地别，<strong>首字节才是患者真实体感</strong>。</p>
+</div></details>
+
+<details><summary>Q23. 告警真的能发出去吗？怎么验证？</summary>
+<div class="ans">
+  <p><strong>配置里写了 receiver 不等于告警能送达</strong>。我最初配的就是 <code>null</code> 占位——栈能起、面板能看、规则能算，但告警<strong>哪儿也去不了</strong>。</p>
+  <p>验证手段：随栈拉起一个<strong>纯标准库的本地接收端</strong>（<code>alert-sink</code>），手工 POST 一条测试告警，看它是否打印可读摘要并落 JSONL。</p>
+  <p>生产用 <code>url_file</code> 而非 <code>url</code> 引用企业 IM webhook——<strong>企微机器人 URL 里的 key 就是凭证</strong>，写进配置文件等于把密钥提交进版本库。</p>
+  <span class="key">"告警系统也要有自己的验证手段。而且我用 url_file 引密钥——配置本身保持无密，Secret 挂载读取。"</span>
+</div></details>
+
+<details><summary>Q24. Prometheus 抓 /metrics 的鉴权怎么解决？</summary>
+<div class="ans">
+  <p>Prometheus <strong>发不了任意自定义头</strong>，但原生支持 <code>authorization.credentials_file</code>。</p>
+  <p>所以本项目 <code>/metrics</code> <strong>同时接受 <code>X-Admin-Key</code> 与 <code>Authorization: Bearer</code></strong> 两种传法——把同一把 <code>ADMIN_API_KEY</code> 存成文件交给 Prometheus 即可安全抓取，<strong>不必为抓取把 <code>METRICS_PUBLIC=1</code> 公开指标</strong>。</p>
+</div></details>
+
+<details><summary>Q25. LLM 花了多少钱，怎么归因？</summary>
+<div class="ans">
+  <p><code>src/cost.py</code> 按 <strong>患者 / Agent / 模型</strong> 三维统计 token 与估算费用，<code>GET /api/admin/cost</code> 聚合返回。</p>
+  <p>关键边界要主动说：<strong>患者维度是进程内分账</strong>，重启或多 worker 会清零（已知边界）；agent/model 维度同步进 Prometheus TSDB 长期留存。</p>
+  <span class="key">"患者维度我刻意不进 Prometheus——每个患者一个时间序列会拖垮 TSDB。低基数维度进 TSDB，高基数的走 API 聚合。这是 cardinality 判断。"</span>
+</div></details>
+
+<h3>E. 数据与多租户（5 题）</h3>
+
+<details><summary>Q26. 多租户怎么做的？users 为什么不加 tenant_id？</summary>
+<div class="ans">
+  <p><code>tenant_id</code> 覆盖 6 张表：<code>departments</code>/<code>symptom_dept_map</code>（科室主数据）+ <code>doctors</code>/<code>doctor_schedules</code>/<code>appointments</code>/<code>exam_steps</code>（业务主数据）。</p>
+  <p>回填<strong>按既有关系逐层派生</strong>：<code>doctors←科室</code> → <code>排班←医生</code> → <code>预约←医生</code> → <code>检查单←预约</code>。<strong>不能一律塞默认租户</strong>——那会把 B 院区的历史预约错挂到默认院区。实测 3 位医生的租户与其科室 100% 一致。</p>
+  <p><strong><code>users</code> 刻意不加</strong>：患者可跨院区就诊，身份应全局共享。按租户切账号会导致同一患者重复建档、<strong>病历碎片化</strong>。预约归属哪个院区由 <code>Appointment.tenant_id</code> 表达。已用测试固化这个决策。</p>
+</div></details>
+
+<details><summary>Q27. 脏数据（比如体温填 370）怎么处理？</summary>
+<div class="ans">
+  <p><code>src/data_quality.py</code> 在<strong>入库前</strong>拦截：完整性、值域（体温 370、血压 1200、收缩压≤舒张压）、单位一致性、未来日期，以及<strong>「abnormal 标记与参考范围矛盾」的语义一致性</strong>。</p>
+  <p>最后这条最值得说：数值落在参考范围内却标了异常，说明<strong>抽取环节出错</strong>——这比缺失更危险，因为医生会看到一个"看起来正常但标签矛盾"的值。</p>
+  <p>不合格<strong>进隔离区而非静默写库</strong>；拒收数接 <code>/metrics</code>（突增即上游抽取/对接出问题）。仅警告级（如单位不在已知表内）放行但附提示，<strong>避免误杀合法数据</strong>。</p>
+</div></details>
+
+<details><summary>Q28. 迁移怎么管理？怎么防漂移？</summary>
+<div class="ans">
+  <p>Alembic 版本化，10 个迁移版本，CI 里跑 <code>alembic check</code> 阻断「ORM 模型 vs 迁移」漂移。</p>
+  <p>方言适配：pgvector 扩展 / HNSW 索引在非 PG 方言跳过；<code>PatientBase</code>（私有库模型）排除在主库比对外；SQLite 改约束走 <code>batch_alter_table</code>。</p>
+  <p>⚠️ 两个真坑：① autogenerate 遇到自定义类型会生成 <code>src.phi.EncryptedText()</code> 却不加 import → <strong>迁移里要写底层 <code>sa.Text()</code></strong>；② <strong>alembic check 查不出「库里多了不该有的表」</strong>——我就是另外检查才发现主库混进了 5 张患者私有表且存着真实 PHI。</p>
+</div></details>
+
+<details><summary>Q29. 患者能跨院区看自己的检查单吗？</summary>
+<div class="ans">
+  <p><strong>能，这是刻意的。</strong>患者端 <code>/api/patient/exam-flow</code> <strong>不按租户过滤</strong>，因为患者身份是全局的，他应该能看到自己在各院区的全部检查单。</p>
+  <p>但医护端 <code>/api/doctor/exam-orders</code> <strong>按院区隔离</strong>——A 院区医生看不到 B 院区开的单，跨院区按 id 改单返回 404。</p>
+  <p>反例（说明不是一刀切）："<strong>这个账号是不是医生</strong>"这类集合查询<strong>不能</strong>按租户过滤——<code>users</code> 是全局的，否则 B 院区的医生会出现在 A 院区的患者列表里。</p>
+</div></details>
+
+<details><summary>Q30. 系统能自我进化吗？看到患者差评会自己改知识库吗？</summary>
+<div class="ans">
+  <p><strong>不能，而且是刻意不能。</strong>在医疗场景"系统自我进化"是<strong>反模式</strong>：患者反馈是<strong>信号不是真理</strong>——可能误解、可能恶意、可能只是嫌措辞不好听。让 Agent 据此自动改医学知识，等于把「什么是对的」交给一个会漂移的非确定性系统。</p>
+  <p>闭环设计成：采集 → 按意图聚类（<strong>阈值 2：单条差评是噪声，反复出现才是缺口</strong>）→ 生成<strong>提案</strong> → 医护在既有 HITL 审批门审核 → 批准后幂等写入知识库。</p>
+  <span class="key">"我把『提案』和『落地』拆成两步，复用同一套 approvals 表和医护工作台，并用测试钉死『PENDING 状态不得提前写入知识库』『非知识更新类型的审批不得执行』——把安全属性变成可回归的断言，而不是口头承诺。"</span>
+</div></details>
+
+<h3>F. 交付运维（3 题）</h3>
+
+<details><summary>Q31. 怎么部署？线上跑的是哪个版本？</summary>
+<div class="ans">
+  <p>Helm chart（13 个模板）+ 三套环境 values。CD 流程：镜像按 <strong>git SHA 打标</strong> → Trivy 扫高危阻断 → dev→staging→prod 推进，<strong>prod 走 GitHub Environment 强制人工审批</strong>。</p>
+  <p>用 SHA 而非 <code>latest</code> 的原因：<code>latest</code> 无法回答「<strong>线上跑的是哪个 commit</strong>」，出事时也没法精确定位回滚目标。</p>
+  <p>三套环境差异明确：dev 用 fake 模型 + 随 chart PG；staging 接真模型 + masked 脱敏；<strong>prod 用本地 Ollama + strict，PHI 不出境</strong>。</p>
+  <p>另附 ArgoCD <strong>拉模式</strong>声明——CI 不需要集群凭证，Git 是唯一事实源；<strong>prod 不开 automated</strong>，由人确认后 Sync。</p>
+</div></details>
+
+<details><summary>Q32. 推模式和拉模式（GitOps）怎么选？</summary>
+<div class="ans">
+  <p><strong>推模式</strong>：CI 拿 kubeconfig 直接 <code>helm upgrade</code>——简单，但 <strong>CI 需要集群写权限</strong>，凭证泄露风险高。</p>
+  <p><strong>拉模式</strong>（ArgoCD）：集群内 Agent 监听 Git，发现期望状态变化自动同步——<strong>CI 不需要任何集群凭证</strong>，Git 是唯一事实源。</p>
+  <p>医疗系统更推荐拉模式：<strong>CI 凭证泄露不会直接导致集群被改</strong>，且任何线上变更都有 Git 提交可追溯。<code>syncPolicy.selfHeal</code> 还能把人工误改拉回 Git 定义的状态。</p>
+</div></details>
+
+<details><summary>Q33. 线上出事了怎么办？</summary>
+<div class="ans">
+  <p>掏出 <code>docs/RUNBOOK.md</code>。<strong>黄金五分钟：先止损，再查因</strong>——顺序不能反。线上排查的诱惑是先翻日志找根因，但医疗系统<strong>患者可用性优先</strong>；先恢复服务，才有从容查的时间。</p>
+  <p>具体：30 秒确认影响面（<code>/health</code> + <code>/api/admin/resilience</code> 看熔断/停用 + 当前镜像 SHA）→ 分层定位 → 止损（回滚或 kill switch 摘流量）→ 查因 → 记录时间线。</p>
+  <p>9 条告警<strong>每条都有对应处置章节</strong>，且告警的 <code>runbook_url</code> 直接指向手册对应锚点。</p>
+  <span class="key">"有 SLO、有告警、有面板，但如果没有『凌晨三点被告警叫醒后第一步做什么』的文档，那只能叫可观测，不能叫可运维。所以我补了 Runbook，并且让每条告警链接到对应章节。"</span>
+</div></details>
+
+<h3>G. 综合与压力题（3 题）</h3>
+
+<details><summary>Q34. 这跟 CRUD 项目有什么区别？</summary>
+<div class="ans">
+  <p>三个本质差异：</p>
+  <p>① <strong>非确定性输出的治理</strong>——传统软件的 bug 可复现，LLM 输出每次不同。所以需要：确定性红线（Tier-0）+ 输出护栏 + 幻觉率度量，<strong>把"不可控"收敛成"可度量、可拦截"</strong>。</p>
+  <p>② <strong>长事务与人工介入</strong>——一次挂号可能跨越数小时等待审批。所以要：状态持久化（checkpointer）+ 幂等 + 中断恢复，<strong>这是传统事务模型没覆盖的</strong>。</p>
+  <p>③ <strong>合规驱动的数据分层</strong>——PHI 隔离不是加个字段加密，是从数据架构上就分开（主库 / 患者私有库 / 向量库）。</p>
+</div></details>
+
+<details><summary>Q35. 这个项目有什么不足？</summary>
+<div class="ans">
+  <p>诚实分三类说：</p>
+  <p><strong>它是个人项目，不是生产系统</strong>——缺真实流量、真实医院数据、团队 code review、on-call 轮值、事故复盘、临床验证。这些<strong>任何个人项目都没有</strong>，硬编反而露馅。</p>
+  <p><strong>度量本身的局限</strong>：幻觉评测集仅 10 条，两个模型都满分，存在<strong>天花板效应</strong>，区分不出更强的模型；压测的 OTel 开销对照仍停在"低于噪声"；LLM 成本的患者维度重启会清零。</p>
+  <p><strong>技术缺口</strong>：prompt 无版本管理（LLM 项目最高频的改动却没有回归卡点）；无灰度/金丝雀发布（改一个 prompt 直接作用于所有患者）。</p>
+  <span class="key">"我知道自己的度量有局限，所以把局限也写进文档了。敢说这个，比报一个漂亮数字可信。"</span>
+</div></details>
+
+<details><summary>Q36. 踩过什么坑？</summary>
+<div class="ans">
+  <p>挑几个真踩过的，别挑教科书答案：</p>
+  <p>① <strong>helm securityContext 层级错误</strong>——<code>readOnlyRootFilesystem</code>/<code>capabilities</code> 是容器级字段，写进 Pod 级会被 API Server 判 unknown field 拒绝部署。<strong>YAML 语法解析和 alembic check 都查不出来，只有真跑 <code>helm template</code> 才暴露。</strong></p>
+  <p>② <strong>主库混入 5 张患者私有表且存着真实 PHI</strong>——初始迁移建表时私有模型还挂在共享 Base 下，架构演进后历史表从未清理。<strong>alembic check 永远发现不了"库里多了不该有的表"。</strong>修复分两步：先脚本抢救数据（alice 的数据只在主库有，<strong>不抢救就删表等于删库</strong>），再由迁移删表。</p>
+  <p>③ <strong>测试只能跑一次</strong>——第二次挂 5 处，根因是四类运行时状态跨用例残留。解法：autouse fixture 重置 + <code>MC_TEST_DB</code> 护栏防误跑业务库。</p>
+  <p>④ <strong>CI 用官方 postgres 镜像必失败</strong>——不带 pgvector 扩展，必须换 <code>pgvector/pgvector:pg16</code>。</p>
+  <p>⑤ <strong>告警的 null receiver</strong>——栈能起但告警哪儿也去不了，"可观测"并没有变成"有人响应"。</p>
+</div></details>
+
+<!-- ============ 数字总览 ============ -->
+<h2 id="ch6">⑥ 数字总览与诚实边界</h2>
+
+<div class="grid g4" style="margin-bottom:16px">
+  <div class="card"><div class="k">压测 30 并发</div><div class="v">83 RPS</div><div class="n">p50 270ms / p95 500ms / 0 失败</div></div>
+  <div class="card"><div class="k">幻觉率</div><div class="v">0%</div><div class="n">本地 1.5b 拒答 66.7% <span style="color:var(--red)">·</span> deepseek 100%</div></div>
+  <div class="card"><div class="k">离线评测</div><div class="v">5/5 · 5/5 · 6/6</div><div class="n">红线 / 意图 / 端到端</div></div>
+  <div class="card"><div class="k">工程门禁</div><div class="v" style="color:var(--green)">全绿</div><div class="n">187 测试 · ruff 81 文件 · 零漂移</div></div>
+</div>
+
+<h3>它是 / 它不是</h3>
+<table>
+  <tr><td style="width:50%;border-right:1px solid var(--line-2)"><strong style="color:var(--green)">✓ 它是</strong>：按企业级标准实现的个人项目。10 个迁移版本零漂移、187 项测试（含 22 项越权 PoC）、三层数据架构、完整可观测闭环、Helm + CD/GitOps、真实模型质量基线。</td>
+  <td><strong style="color:var(--amber)">✗ 它不是</strong>：跑过生产流量的系统。缺真实流量与医院数据、团队流程、on-call 记录、事故复盘、临床验证。<strong>这些任何个人项目都没有，硬编反而露馅。</strong></td></tr>
+</table>
+
+<h3>还缺什么（如实记录）</h3>
+<table>
+  <tr><th style="width:8%">优先级</th><th>项</th><th style="width:34%">说明</th></tr>
+  <tr><td><span class="pill p-amber">P3</span></td><td>Prompt 版本管理 + 回归卡点</td><td>LLM 项目最高频的改动是 prompt，却无版本号；评测集已有，缺「改 prompt 必须重跑评测」的 CI 卡点</td></tr>
+  <tr><td><span class="pill p-amber">P3</span></td><td>灰度 / 金丝雀发布</td><td>当前 CD 全量推进，改一个 prompt 直接作用于所有患者</td></tr>
+  <tr><td><span class="pill p-gray">P3</span></td><td>扩充幻觉评测集</td><td>10 条用例两模型均满分，天花板效应</td></tr>
+  <tr><td><span class="pill p-gray">P3</span></td><td>备份恢复演练</td><td><strong>没演练过恢复的备份，在事故中等于没有备份</strong></td></tr>
+</table>
+
+<footer>
+  本文件基于 2026-08-30 对 <code>/Users/mac/Documents/Medical-care</code> 的实测与代码通读生成。所有数字均为实测值（Postgres 187/187 测试、真实模型幻觉率评测、30 并发压测基线），非估算。<br>
+  配套：<a href="docs/PROJECT_OVERVIEW.md">项目总览</a> · <a href="docs/RUNBOOK.md">运维处置手册</a> · <a href="企业级体检报告.html">企业级体检报告</a> · <a href="docs/DATA_COMPLIANCE.md">数据合规</a> · <a href="docs/MULTI_TENANT.md">多租户设计</a> · <a href="docs/DEPLOY_IAC.md">部署 IaC</a>
+</footer>
+
+</div>
+</body>
+</html>
