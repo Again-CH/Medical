@@ -1,0 +1,76 @@
+# Alertmanager 配置（生产版）—— 告警路由与 alertmanager.yml 完全一致，
+# 唯一区别是「发到哪」：从本地 alert-sink 换成企业 IM / 电话值班。
+#
+# 关键：用 `url_file` 而非 `url` 引用密钥文件里的 webhook。
+# 企业微信 / 钉钉 / 飞书的机器人 webhook 形如
+#   https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=XXXX
+# 其中 key 就是凭证 —— 写进配置文件等于把密钥提交进版本库。
+# url_file 让 Alertmanager 启动时从挂载的 Secret 读取，配置本身保持无密。
+#
+# 部署方式（K8s 示例，见 charts/medical-agent 的 secretRef 挂载）：
+#   kubectl create secret generic alert-webhook \
+#     --from-literal=critical_url="$WECOM_CRITICAL_URL" \
+#     --from-literal=warning_url="$WECOM_WARNING_URL"
+# 然后把 Secret 挂到 /etc/alertmanager/secrets/，本文件无需任何改动。
+#
+# 本地/demo 想试生产配置：把两个 xxx.example 文件里填上真实 URL 即可
+# （文件本身被 .gitignore 排除，不会误提交）。
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: im-default
+  group_by: ["alertname", "severity"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers:
+        - severity = "critical"
+      receiver: im-critical
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 30m
+
+    - matchers:
+        - severity = "warning"
+      receiver: im-warning
+      group_wait: 1m
+      group_interval: 5m
+      repeat_interval: 4h
+
+    - matchers:
+        - severity = "info"
+      receiver: im-info
+      group_wait: 5m
+      group_interval: 30m
+      repeat_interval: 24h
+
+receivers:
+  - name: im-default
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/warning_url
+        send_resolved: true
+
+  - name: im-critical
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/critical_url
+        send_resolved: true
+
+  - name: im-warning
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/warning_url
+        send_resolved: true
+
+  - name: im-info
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/warning_url
+        send_resolved: true
+
+inhibit_rules:
+  - source_matchers:
+      - severity = "critical"
+    target_matchers:
+      - severity =~ "warning|info"
+    equal: ["alertname"]

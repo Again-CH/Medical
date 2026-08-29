@@ -45,3 +45,8 @@ client/node_modules/
 client/dist/
 client/test-results/
 
+# 本地告警接收端的运行时产物（告警 JSONL 落盘）
+observability/alert-sink-data/
+# 生产 webhook 密钥文件（含机器人 key，绝不入库）
+observability/alertmanager/secrets/
+

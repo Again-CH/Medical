@@ -1,25 +1,76 @@
-# Alertmanager 基础配置：默认把告警打到日志；生产请接入企业 IM / 电话等 receiver。
-# 此处用 null receiver 占位，保证栈能启动；按需替换 receivers 与 route 即可。
+# Alertmanager 配置（本地可验证版）
+#
+# 与生产版的差别只在「告警发到哪」：
+#   - 本文件：发到本地 alert-sink（ scripts/alert_sink.py ），链路可跑可看可测，
+#             无需任何真实凭证即可验证「告警确实发出去了」。
+#   - 生产版：见 alertmanager.production.yml —— 用 url_file 引用密钥文件里的
+#             企业 IM webhook（URL 含密钥，绝不入库）。
+# 两套配置的告警路由、抑制规则、时序完全一致，切换时规则不用动。
+#
+# 告警级别分布（prometheus/alert_rules.yml）：critical 2 条 / warning 6 条 / info 1 条
+
 global:
   resolve_timeout: 5m
 
 route:
-  receiver: "null"
+  receiver: sink-default
   group_by: ["alertname", "severity"]
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
   routes:
+    # 严重：10s 内发出、30 分钟重复提醒（医疗场景：安全闸突增、错误率破 SLO）
     - matchers:
         - severity = "critical"
-      receiver: "null"
+      receiver: sink-critical
       group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 30m
+
+    # 警告：聚合 1 分钟再发，4 小时重复（SLO 边缘、熔断开启、降级突增）
+    - matchers:
+        - severity = "warning"
+      receiver: sink-warning
+      group_wait: 1m
+      group_interval: 5m
+      repeat_interval: 4h
+
+    # 提示：仅归档，24 小时汇总一次（如 kill switch 激活，属已知运维动作）
+    - matchers:
+        - severity = "info"
+      receiver: sink-info
+      group_wait: 5m
+      group_interval: 30m
+      repeat_interval: 24h
 
 receivers:
-  - name: "null"
+  # 三个接收端目前都指向同一个本地 sink，severity 由告警标签携带；
+  # 拆成三个是为生产切换留位（critical→电话/值班，warning→企业 IM，info→归档）。
+  - name: sink-default
+    webhook_configs:
+      - url: http://alert-sink:9101/webhook
+        send_resolved: true
 
-# 生产示例（取消注释并填入真实 webhook）：
-# receivers:
-#   - name: "wecom"
-#     webhook_configs:
-#       - url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"
+  - name: sink-critical
+    webhook_configs:
+      - url: http://alert-sink:9101/webhook
+        send_resolved: true
+
+  - name: sink-warning
+    webhook_configs:
+      - url: http://alert-sink:9101/webhook
+        send_resolved: true
+
+  - name: sink-info
+    webhook_configs:
+      - url: http://alert-sink:9101/webhook
+        send_resolved: true
+
+# 抑制规则：同一告警名在 critical 触发时，抑制它的 warning/info，
+# 避免「一个故障刷出一屏告警」——告警疲劳比漏报更伤响应效率。
+inhibit_rules:
+  - source_matchers:
+      - severity = "critical"
+    target_matchers:
+      - severity =~ "warning|info"
+    equal: ["alertname"]

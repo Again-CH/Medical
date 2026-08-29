@@ -7,6 +7,14 @@
 #   Prometheus  http://localhost:9090   （看指标 / 验证告警）
 #   Grafana     http://localhost:3000   （admin / admin，已自动导入医疗 Agent 面板）
 #   Alertmanager http://localhost:9093
+#   Alert Sink  http://localhost:9101/health （本地告警接收端，见下方说明）
+#
+# 验证告警闭环（告警是否真的发出去了）：
+#   curl -XPOST http://localhost:9093/api/v2/alerts -H 'Content-Type: application/json' -d '[
+#     {"labels":{"alertname":"SmokeTest","severity":"critical","instance":"local"},
+#      "annotations":{"summary":"告警闭环冒烟测试"}}]'
+#   docker compose logs -f alert-sink      # 应看到可读摘要
+#   cat alert-sink-data/alerts.jsonl       # 应多出一行 JSON
 services:
   prometheus:
     image: prom/prometheus:latest
@@ -27,6 +35,42 @@ services:
       - ./alertmanager:/etc/alertmanager:ro
     command:
       - --config.file=/etc/alertmanager/alertmanager.yml
+    depends_on:
+      - alert-sink
+    restart: unless-stopped
+
+  # 本地告警接收端：把 Alertmanager 的 webhook 真正落地，让"可观测"变成"可验证"。
+  # 生产请改用 alertmanager.production.yml（url_file 引用企业 IM 密钥），
+  # 本服务仅用于本地闭环验证，纯标准库实现，无需构建镜像、无额外依赖。
+  alert-sink:
+    image: python:3.12-alpine
+    working_dir: /app
+    ports:
+      - "9101:9101"
+    volumes:
+      - ../scripts:/app/scripts:ro
+      - ./alert-sink-data:/data
+    command:
+      - python
+      - -u
+      - scripts/alert_sink.py
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "9101"
+      - --log
+      - /data/alerts.jsonl
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request;urllib.request.urlopen('http://localhost:9101/health')",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
 
   grafana:
