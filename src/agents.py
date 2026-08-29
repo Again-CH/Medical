@@ -24,6 +24,8 @@ from .db import clear_pending, is_db_enabled, pop_pending, set_pending
 from .llm import FakeLLM, acompose, get_llm
 from .logging_config import get_logger
 from .memory import append_note
+from .resilience import KILL_SWITCH, BreakerOpenError, get_breaker
+from .resilience import enabled as resilience_enabled
 from .state_utils import last_human
 from .tools import NAMESPACES
 from .tools.triage import _match_knowledge
@@ -107,6 +109,12 @@ SENSITIVE_TOOLS = {"medicare_settle", "handoff", "call_120"}
 # 越权/拒绝时的固定回复（不依赖 LLM，不泄露「该患者是否存在」等可探测信息）
 _TOOL_DENIED = "[denied] 该操作未获授权（仅可访问本人数据），已记录安全审计。"
 
+# 韧性工程：工具被运行时停用 / 其下游熔断时的安全降级回复（不依赖 LLM，避免编造）
+_TOOL_DISABLED = (
+    "[disabled] 该服务当前已被运维主动停用（运行时 kill switch），请稍后重试或联系人工客服。"
+)
+_TOOL_DEGRADED = "[degraded] 该服务暂时不可用，已降级处理，请稍后重试。"
+
 
 def _approval_payload(action: str, state, calls: list) -> dict:
     """构造人工审核门载荷：**必须携带完整参数与申请人**。
@@ -126,18 +134,34 @@ def _approval_payload(action: str, state, calls: list) -> dict:
 
 
 def _invoke_tool(fn, args):
-    """执行工具并统一收敛越权异常。
+    """执行工具并统一收敛越权 / 停用 / 熔断异常。
 
     对象级授权（OLP）由 ``integrations._resolve_patient`` 在访问层收口：
     一旦模型尝试越权访问他人档案会抛 ``PermissionError``。此处捕获后转为
     固定拒绝文本返回给模型，避免 500、也避免把异常细节回灌进对话上下文。
+
+    韧性工程叠加两层保护：
+    - 运行时 kill switch：运维主动停用某工具（其下游 HIS/短信网关宕机）时，
+      直接返回 ``_TOOL_DISABLED`` 占位，不向故障依赖发请求。
+    - 熔断器：工具下游持续失败被隔离（OPEN）时快速失败，返回 ``_TOOL_DEGRADED``，
+      避免每次调用都打满超时把调用方拖死（与 retry.py 的瞬时自愈互补）。
     """
     name = getattr(fn, "name", "?")
     with span("tool.call", {"tool": name}):
+        if resilience_enabled() and KILL_SWITCH.is_disabled(name):
+            log.warning("resilience.tool_disabled", extra={"tool": name})
+            return _TOOL_DISABLED
         try:
-            out = fn.invoke(args or {})
-            return out
+            if resilience_enabled():
+                return get_breaker(f"tool:{name}").call_sync(lambda: fn.invoke(args or {}))
+            return fn.invoke(args or {})
+        except BreakerOpenError:
+            # 工具下游持续失败被隔离：快速失败 + 降级占位，不向故障依赖打超时
+            log.warning("resilience.breaker_open", extra={"tool": name})
+            return _TOOL_DEGRADED
         except PermissionError:
+            # 对象级授权（OLP）在访问层收口：越权访问他人档案被拒，转为固定拒绝文本，
+            # 避免 500、也避免把异常细节回灌进对话上下文。
             log.warning("security.tool_denied", extra={"tool": name})
             return _TOOL_DENIED
 
@@ -200,6 +224,12 @@ async def run_agent_with_tools(llm, tools, state, system, sensitive_tools, appro
     resume 后一次性执行全部敏感动作 —— 医生只需批准一次（lock+settle 一起批），
     也避免 LLM 分步调用敏感工具时被提前挂起导致后续动作丢失。
     """
+    # 运行时 kill switch：整个意图被运维主动停用 → 不进入子 Agent，直接降级
+    # （tool_result 为空，交给 final_answer 的 KB 命中 / 安全兜底），不向故障依赖发请求。
+    if resilience_enabled() and KILL_SWITCH.is_disabled(f"agent:{state.get('intent')}"):
+        log.warning("resilience.intent_disabled", extra={"intent": state.get("intent")})
+        return [], ""
+
     llm_bound = llm.bind_tools(tools)
     # 给 fake 模型提供上下文 hint，使其能确定性地选出本命名空间工具
     if isinstance(llm_bound, FakeLLM):
@@ -245,7 +275,20 @@ async def run_agent_with_tools(llm, tools, state, system, sensitive_tools, appro
     for _ in range(MAX_STEPS):
         # LLM 调用单独成 span：回答"慢是慢在模型还是工具"的关键依据
         with span("llm.invoke", {"model": type(llm_bound).__name__, "step": _}):
-            ai = await llm_bound.ainvoke(msgs + collected)
+            if resilience_enabled():
+                try:
+                    ai = await get_breaker("llm").call_async(
+                        lambda: llm_bound.ainvoke(msgs + collected)
+                    )
+                except BreakerOpenError:
+                    # LLM 依赖已被隔离：本节点降级为「不调用 LLM」，循环退出后
+                    # tool_result 为空，final_answer 会走 KB 命中 / 安全兜底，绝不编造。
+                    log.warning(
+                        "resilience.llm_breaker_open", extra={"intent": state.get("intent")}
+                    )
+                    break
+            else:
+                ai = await llm_bound.ainvoke(msgs + collected)
         collected.append(ai)
         calls = getattr(ai, "tool_calls", None) or []
         if not calls:
@@ -401,9 +444,14 @@ async def final_answer(state):
         "您也可以稍后重试或联系人工客服。"
     )
     try:
-        text = await acompose(llm, msgs)
+        # LLM 汇总同样走熔断器：依赖被隔离（OPEN）时快速失败，直接走统一安全降级，
+        # 不再为每个请求打满超时。BreakerOpenError 属 Exception，下面的 except 统一兜底。
+        if resilience_enabled():
+            text = await get_breaker("llm").call_async(lambda: acompose(llm, msgs))
+        else:
+            text = await acompose(llm, msgs)
     except Exception as e:
-        print(f"[final_answer] LLM 汇总失败，启用统一安全降级: {e!r}")
+        print(f"[final_answer] LLM 汇总失败（含熔断），启用统一安全降级: {e!r}")
         return {"messages": [AIMessage(content=_SAFE_FALLBACK)]}
     if not text or not text.strip():
         # 模型返回空（如限流/内容被过滤）：同样走安全降级

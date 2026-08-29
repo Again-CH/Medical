@@ -96,6 +96,12 @@ from .metrics import (
 from .metrics import (
     render as render_metrics,
 )
+from .resilience import (
+    KILL_SWITCH,
+    RESILIENCE_ENABLED,
+    all_breakers,
+    reset_breakers,
+)
 from .safety import (
     CONSENT_VERSION,
     DISCLAIMER_TEXT,
@@ -1325,6 +1331,76 @@ async def metrics(req: Request):
     set_pending_approvals(_count_pending_approvals())
     body, content_type = render_metrics()
     return Response(content=body, media_type=content_type)
+
+
+@app.get("/api/admin/resilience")
+async def resilience_status(req: Request):
+    """查看熔断器状态与 kill switch 清单（运维排障）。需 X-Admin-Key。"""
+    _require_admin_key(req)
+    breakers = [b.snapshot() for b in all_breakers().values()]
+    breakers.sort(key=lambda x: x["name"])
+    return {
+        "resilience_enabled": RESILIENCE_ENABLED,
+        "breakers": breakers,
+        "killswitch": {
+            "disabled": KILL_SWITCH.list_disabled(),
+            "active": len(KILL_SWITCH.list_disabled()),
+        },
+    }
+
+
+@app.post("/api/admin/killswitch")
+async def killswitch_toggle(req: Request):
+    """运行时停用/启用某个工具或意图（``agent:<intent>``）。需 X-Admin-Key。
+
+    请求体示例::
+
+        {"target": "query_availability", "disabled": true}
+        {"target": "agent:triage", "disabled": false}
+
+    下游 HIS/短信网关宕机时，运维无需发版即可把流量从故障依赖上摘掉，系统走安全降级。
+    """
+    _require_admin_key(req)
+    try:
+        body = await req.json()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"请求体校验失败：{e}") from e
+    target = body.get("target")
+    disabled = body.get("disabled")
+    if not isinstance(target, str) or not target:
+        raise HTTPException(status_code=400, detail="target 必须为非空字符串")
+    if not isinstance(disabled, bool):
+        raise HTTPException(status_code=400, detail="disabled 必须为布尔值")
+    KILL_SWITCH.toggle(target, disabled)
+    from .resilience import _sync_killswitch_metric
+
+    _sync_killswitch_metric()
+    record_audit("admin", "killswitch_toggle", {"target": target, "disabled": disabled})
+    log.warning("resilience.killswitch_toggled", extra={"target": target, "disabled": disabled})
+    return {"ok": True, "target": target, "disabled": KILL_SWITCH.is_disabled(target)}
+
+
+@app.post("/api/admin/breaker/reset")
+async def breaker_reset(req: Request):
+    """手动复位熔断器（运维确认依赖已恢复后）。需 X-Admin-Key。
+
+    请求体 ``{"name": "llm"}`` 复位指定熔断器；省略 name 则复位全部。
+    """
+    _require_admin_key(req)
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    name = body.get("name")
+    if name:
+        b = all_breakers().get(name)
+        if b:
+            b.reset()
+        result = {"ok": True, "reset": [name]}
+    else:
+        reset_breakers()
+        result = {"ok": True, "reset": "all"}
+    return result
 
 
 def _count_pending_approvals() -> Optional[int]:

@@ -125,7 +125,7 @@
   <div class="lead">体检结论（2026-08-29 修复后复检）</div>
   <p><strong>有数据库，而且是三层架构。</strong>Postgres 主库 25 张表 + 每患者私有 SQLite（PHI 物理隔离）+ pgvector 向量库，Alembic 单一来源管 schema。</p>
   <p><strong>首轮体检发现的 5 个红灯已全部修复</strong>：ruff、漂移检查、全量测试、离线评测、clean clone 一键跑通——五道本地门禁与六道 CI 门禁现在全绿，且可重复执行。</p>
-  <p style="margin-bottom:0"><strong>面试可用性：已达可面试状态。</strong>剩余差距集中在可观测性与性能容量（下表 3 分 / 2 分两栏），属于"上线前要补"而非"工程能力缺陷"。</p>
+  <p style="margin-bottom:0"><strong>面试可用性：已达可面试状态。</strong>经历三轮补强（红灯修复 → 可观测性/压测基线 → 韧性工程），设计水位已覆盖多 Agent 编排、数据治理、安全合规、可观测性与可靠性；剩余差距集中在告警/SLO、LLM 成本归因、部署 IaC 与前端工程化等"上线前要补"的运维深化项，而非工程能力缺陷。</p>
 </div>
 
 <div class="grid g4" style="margin:16px 0 8px">
@@ -224,8 +224,8 @@
     </tr>
     <tr>
       <td><strong>可靠性</strong></td>
-      <td><span class="pill p-green">8 / 10</span></td><td><span class="pill p-green">8 / 10</span></td>
-      <td>幂等键、重试门、checkpointer；主链路端到端用例已转绿</td>
+      <td><span class="pill p-green">9 / 10</span></td><td><span class="pill p-green">9 / 10</span></td>
+      <td>幂等键、重试门、checkpointer；新增熔断器（持续故障隔离）+ 运行时 kill switch（摘流量）+ LLM/工具安全降级编排；主链路端到端用例已转绿</td>
     </tr>
     <tr>
       <td><strong>CI/CD 与质量门禁</strong></td>
@@ -307,11 +307,17 @@
   <li><strong>压测基线</strong>（<span class="mono">bench/压测基线报告.html</span>）：用 fake 模型压测，测的是系统自身而非供应商网络。30 并发下 83 RPS、p50 270ms、p95 500ms、零失败；并单独量化了登录（PBKDF2 60 万轮，p50 85ms）、checkpointer 写放大（18 行/轮）、pgvector 检索（1.5ms）、安全闸（2.7μs）。</li>
 </ul>
 
+<h3>已完成 · 韧性工程（第三轮）</h3>
+<ul>
+  <li><strong>熔断器 <span class="mono">src/resilience.py</span></strong>：对反复失败的依赖（LLM / 外部工具）统计连续失败，超阈值即 OPEN，开启期内<strong>快速失败</strong>（不浪费超时）；冷却结束后进入半开态放一个探测，成功若干次则闭合、失败则重新开启。与 <span class="mono">retry.py</span> 的分工：retry 解决瞬时故障自愈，breaker 解决<strong>持续故障隔离</strong>——避免对挂死的依赖持续打超时把调用方拖死、进而雪崩。</li>
+  <li><strong>运行时 kill switch</strong>：运维无需发版即可一键停用某个工具（如 HIS 宕机）或整个意图（<span class="mono">agent:&lt;intent&gt;</span>），把流量从故障依赖上摘掉。落地为 <span class="mono">/api/admin/killswitch</span>（X-Admin-Key 鉴权），配合 <span class="mono">/api/admin/resilience</span> 看状态、<span class="mono">/api/admin/breaker/reset</span> 复位。</li>
+  <li><strong>降级编排</strong>：熔断/停用后由调用方回退到「不依赖该依赖」的安全路径——LLM 熔断 → <span class="mono">final_answer</span> 直接返回兜底话术（<span class="mono">_SAFE_FALLBACK</span>，绝不编造）；工具停用 → 返回「暂不可用」占位；分诊意图还保留 KB 直出作为更优降级。指标接入 <span class="mono">/metrics</span>（熔断开启数、快速拒绝数、停用目标数）。</li>
+</ul>
+
 <h3>P1 · 剩余可做的</h3>
 <ul>
   <li><strong>告警规则与 SLO</strong>：指标和链路都有了，但没人盯着等于没有。建议配 Prometheus alerting rules（红线命中率突增、审批积压超阈值、5xx 比例）与 Grafana 面板，把"可观测"变成"有人响应"。</li>
   <li><strong>LLM 侧成本归因</strong>：按患者 / 按 Agent / 按模型统计 token 消耗与费用。医疗场景的幻觉率与成本是老板最关心的两个数字，有这个才能讲业务语言。</li>
-  <li><strong>韧性工程</strong>：LLM 超时熔断、失败降级到规则引擎、kill switch 一键停掉某个 Agent 的工具权限。现在有 <span class="mono">retry.py</span> 和 fake 兜底，但缺熔断与降级编排。</li>
 </ul>
 
 <h3>P2 · 从"能跑"到"能交付运维"</h3>
@@ -347,8 +353,9 @@
   <li><strong>HITL 中断恢复</strong>：讲 interrupt 挂在审批门 → 状态写进 Postgres checkpointer → 医护端 <span class="mono">/api/review/resolve</span> 批准 → <span class="mono">Command(resume=...)</span> 恢复 → 服务重启也不丢。配一句"审批单 payload 里带完整 args 和 requester，resolve 时记 resolved_by，审计可追溯"。</li>
   <li><strong>PHI 隔离与越权防护</strong>：讲工具 schema 里<strong>没有 patient_id 参数</strong>，身份只从 JWT 取（对象级授权 OLP），thread_id 派生为 <span class="mono">{role}:{sub}:{client_tid}</span>；再配 <span class="mono">tests/test_security_isolation.py</span> 里 293 行越权 PoC 回归。这是本项目最硬的一块。</li>
   <li><strong>幂等与审批审计</strong>：讲挂号用 <span class="mono">idempotency_keys</span> + 号源 <span class="mono">booked_slots</span> 悲观锁防超卖，配合 <span class="mono">approvals</span> 表与 194 条 audit_logs 形成完整证据链。</li>
-  <li><strong>合规驱动的 schema 治理</strong>（本轮新增素材）：三层数据架构（主库 / 每患者私有 SQLite / 向量库）决定了「哪些表该进迁移、哪些不该」。讲你如何让 <span class="mono">alembic check</span> 理解这个边界——私有模型挂在独立 <span class="mono">PatientBase</span> 下、pgvector 迁移按方言跳过、HNSW 索引排除在比对之外。这类"让工具理解架构意图"的活儿，比堆功能更能体现功力。</li>
-</ul>
+    <li><strong>合规驱动的 schema 治理</strong>（本轮新增素材）：三层数据架构（主库 / 每患者私有 SQLite / 向量库）决定了「哪些表该进迁移、哪些不该」。讲你如何让 <span class="mono">alembic check</span> 理解这个边界——私有模型挂在独立 <span class="mono">PatientBase</span> 下、pgvector 迁移按方言跳过、HNSW 索引排除在比对之外。这类"让工具理解架构意图"的活儿，比堆功能更能体现功力。</li>
+    <li><strong>韧性工程：重试与熔断的分工</strong>（第三轮新增素材）：讲清楚 <span class="mono">retry.py</span> 解决"瞬时故障自愈"（超时/抖动指数退避），<span class="mono">resilience.py</span> 的熔断器解决"持续故障隔离"——依赖真挂了，再重试只会叠加超时把协程拖死、进而雪崩，所以 OPEN 态要<strong>快速失败</strong>，冷却后放半开探测接回来。再配一句"运维还能用 kill switch 不发版就摘掉故障依赖（如 HIS 宕机停某个工具），降级统一走安全兜底话术，绝不编造"。</li>
+  </ul>
 
 <h3>四个会被追问的坑，提前备好答案</h3>
 
@@ -367,6 +374,10 @@
 <div class="quote">
   <div class="q">"QPS 多少？p95 延迟多少？"</div>
   <div class="a">有实测数据了：fake 模型下 30 并发打满，<strong>83 RPS、p50 270ms、p95 500ms、零失败</strong>；带思考时间的正常负载下 p50 只有 8ms。<strong>关键是要说清为什么用 fake 模型测</strong>——真实模型下 p95 由 Deepseek 往返决定，测的是供应商网络不是我们的系统。再给出热点剖析：登录是 CPU 热点（PBKDF2 60 万轮，p50 85ms）、checkpointer 每轮写 18 行、pgvector 检索 1.5ms、安全闸 2.7μs。<strong>能说出"优化重点在减少 LLM 往返而非框架"这个判断，比报一个漂亮数字更有说服力。</strong></div>
+</div>
+<div class="quote">
+  <div class="q">"你的下游（LLM / HIS）挂了，系统怎么办？"</div>
+  <div class="a">分层答：① 瞬时故障靠 <span class="mono">retry.py</span> 指数退避自愈；② 持续故障靠熔断器（<span class="mono">resilience.py</span>）快速失败，避免超时叠加雪崩，冷却后半开探测恢复；③ 运维还能用 kill switch 主动摘除故障依赖（如 HIS 宕机停某个工具、甚至停整个意图），无需发版；④ 降级统一走安全兜底——LLM 不可用直接返回"系统暂时无法生成建议，紧急情况拨 120"的兜底话术，绝不编造诊断。实测：把 LLM 熔断器人为开启后，完整对话图仍能优雅返回兜底文本而非 500 或挂死，15 项韧性测试覆盖开/合/半开与端到端降级。</div>
 </div>
 <div class="quote">
   <div class="q">"加了链路追踪，性能掉多少？"</div>
@@ -399,19 +410,28 @@
   </tbody>
 </table>
 
+<h3>第三轮：韧性工程（已完成）</h3>
+<table>
+  <thead><tr><th style="width:8%">项</th><th>动作</th><th style="width:32%">验收结果</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill p-green">R1</span></td><td><span class="mono">src/resilience.py</span> 熔断器（CLOSED/OPEN/HALF_OPEN）+ 注册表</td><td>单测覆盖：阈值开启、快速失败、半开恢复、半开失败重开、成功清零、reset</td></tr>
+    <tr><td><span class="pill p-green">R2</span></td><td>运行时 kill switch（工具 / 意图）+ 三个 admin 运维端点</td><td><span class="mono">/api/admin/resilience</span> 看状态、<span class="mono">/api/admin/killswitch</span> 停用/启用、<span class="mono">/api/admin/breaker/reset</span> 复位；401 缺密钥</td></tr>
+    <tr><td><span class="pill p-green">R3</span></td><td>降级编排接入 agents.py（LLM/工具熔断 + 意图停用 → 安全兜底）</td><td>端到端：LLM 熔断开启时完整图仍优雅返回（安全兜底，不 500 / 不挂起）；15 项新增测试全绿</td></tr>
+  </tbody>
+</table>
+
 <h3>剩余建议（按需）</h3>
 <table>
   <thead><tr><th style="width:8%">优先级</th><th>动作</th><th style="width:32%">收益</th></tr></thead>
   <tbody>
     <tr><td><span class="pill p-amber">P1</span></td><td>告警规则 + SLO + Grafana 面板</td><td>把"可观测"变成"有人响应"，可观测性 7 → 9 分</td></tr>
     <tr><td><span class="pill p-amber">P1</span></td><td>LLM token 成本归因（按患者 / Agent / 模型）</td><td>能讲业务语言，成本与幻觉率可管</td></tr>
-    <tr><td><span class="pill p-amber">P1</span></td><td>韧性工程：熔断、降级编排、kill switch</td><td>可靠性 8 → 9 分</td></tr>
     <tr><td><span class="pill p-blue">P2</span></td><td>多轮交替压测取中位数，修正开销对照实验</td><td>把"低于噪声"变成确定数字</td></tr>
   </tbody>
 </table>
 
 <footer>
-  本报告基于 2026-08-29 对 /Users/mac/Documents/Medical-care 的实测：本地 Postgres 实库查询、全量 pytest（sqlite 与 Postgres 双路径、各连跑两次）、ruff check / format、alembic 双方言漂移检查、离线评测、CI 配置审阅、clean clone 验证、locust 压测（正常负载 / 极限吞吐 / 开启追踪对照三轮）与热点剖析。所有数字均为实测值，非估算。
+  本报告基于 2026-08-29 对 /Users/mac/Documents/Medical-care 的实测：本地 Postgres 实库查询、全量 pytest（sqlite 与 Postgres 双路径、各连跑两次）、ruff check / format、alembic 双方言漂移检查、离线评测、CI 配置审阅、clean clone 验证、locust 压测（正常负载 / 极限吞吐 / 开启追踪对照三轮）与热点剖析、第三轮韧性工程（熔断器 / 运行时 kill switch / LLM·工具降级编排，15 项新增测试覆盖状态机与端到端降级）。所有数字均为实测值，非估算。
 </footer>
 
 </div>

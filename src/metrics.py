@@ -124,6 +124,23 @@ TOOL_DURATION = Histogram(
     buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5),
 )
 
+# ---------- 韧性工程：熔断与降级 ----------
+BREAKER_OPENS = Counter(
+    "breaker_opens",
+    "熔断器开启次数（依赖被隔离，停止向其发送请求）",
+    ["breaker"],
+    namespace=NAMESPACE,
+)
+BREAKER_REJECTIONS = Counter(
+    "breaker_rejections",
+    "熔断器开启期间被快速拒绝的调用数（未打超时直接失败）",
+    ["breaker"],
+    namespace=NAMESPACE,
+)
+KILLSWITCH_ACTIVE = Gauge(
+    "killswitch_active", "当前处于运行时停用状态的目标数量（工具 / 意图）", namespace=NAMESPACE
+)
+
 
 @contextmanager
 def track(node: str, counter: Counter, histogram: Histogram, **labels) -> Iterator[None]:

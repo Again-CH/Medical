@@ -108,6 +108,19 @@ REFRESH_ABSOLUTE_EXP_DAYS = int(os.getenv("REFRESH_ABSOLUTE_EXP_DAYS", "30"))
 # ---- 单患者单日挂号上限：防 Agent 失控循环或恶意囤号耗尽号源 ----
 MAX_APPOINTMENTS_PER_DAY = int(os.getenv("MAX_APPOINTMENTS_PER_DAY", "5"))
 
+# ---- 韧性工程：熔断器 + 运行时 kill switch ----
+# RESILIENCE_ENABLED：总开关。关闭后所有熔断/降级逻辑降级为直连（仅用于压测对照/排查）。
+# BREAKER_*：熔断器参数（连续失败多少次开启、开启后冷却多久、半开需几次成功才关闭）。
+# RESILIENCE_DISABLED：启动即停用的目标（工具名如 query_availability，或意图 agent:triage），逗号分隔。
+#   用于「下游依赖上线即已知宕机」的场景，无需先走一遍失败计数。
+RESILIENCE_ENABLED = os.getenv("RESILIENCE_ENABLED", "true").lower() in ("1", "true", "yes")
+BREAKER_FAILURE_THRESHOLD = int(os.getenv("BREAKER_FAILURE_THRESHOLD", "5"))
+BREAKER_COOLDOWN_SECONDS = float(os.getenv("BREAKER_COOLDOWN_SECONDS", "30"))
+BREAKER_HALFOPEN_SUCCESSES = int(os.getenv("BREAKER_HALFOPEN_SUCCESSES", "2"))
+RESILIENCE_DISABLED = [
+    t.strip() for t in os.getenv("RESILIENCE_DISABLED", "").split(",") if t.strip()
+]
+
 # ---- PHI 出境策略（医疗数据合规红线） ----
 # strict：仅允许本地/私有化端点（ollama 或内网 base_url），配置外网端点即拒绝启动。
 # masked：允许出境，但出境前对 prompt 做 PII/PHI 脱敏。
