@@ -67,9 +67,16 @@ autoscaling:
   targetCPUUtilizationPercentage: 80
 
 # 非 root + 只读根文件系统；可写目录（/app/data）单独挂 emptyDir
+# Pod 级安全上下文：K8s API 只认 runAsUser / runAsNonRoot / fsGroup /
+# seLinuxOptions / seccompProfile / supplementalGroups / sysctls，
+# 其余字段（allowPrivilegeEscalation / capabilities / readOnlyRootFilesystem）
+# 属**容器级**，放错层级会被 API Server 以 unknown field 拒绝。
 securityContext:
   runAsNonRoot: true
   runAsUser: 10001
+
+# 容器级安全上下文（只读根文件系统 + 降权 + 丢弃全部 capabilities）
+containerSecurityContext:
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
   capabilities:

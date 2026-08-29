@@ -34,6 +34,11 @@ spec:
           # 密钥缺失即 Pod 起不来（envFrom 引用不存在的 Secret →
           # CreateContainerConfigError），平移 docker-compose 的 ${VAR:?}
           # 「缺失即失败」强约束，杜绝弱口令进生产。
+          # 容器级安全上下文：只读根文件系统 + 禁止提权 + 丢弃全部 capabilities。
+          # 这三个字段在 K8s API 中**只属于容器**，写进 Pod 级 securityContext
+          # 会被 API Server 判为 unknown field 而拒绝部署。
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           envFrom:
             - configMapRef:
                 name: {{ include "medical-agent.fullname" . }}-config
