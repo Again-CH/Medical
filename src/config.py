@@ -54,6 +54,17 @@ RATE_LIMIT_RULES = {
     "/api/review": (30, 60),  # 医护端：60秒最多30次
 }
 
+# ---- 可观测性：Prometheus 指标端点 ----
+# /metrics 默认需要 X-Admin-Key（会暴露路由清单与流量特征，不该匿名可读）。
+# 仅在内网 / sidecar 抓取场景下设为 1 关闭鉴权。
+METRICS_PUBLIC = os.getenv("METRICS_PUBLIC", "0").lower() in ("1", "true", "yes")
+
+# OpenTelemetry 链路追踪：默认关闭，配置 exporter 端点后启用。
+# 未安装 opentelemetry 相关包时自动降级为 no-op，不影响主流程。
+OTEL_ENABLED = os.getenv("OTEL_ENABLED", "0").lower() in ("1", "true", "yes")
+OTEL_EXPORTER_OTLP_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+OTEL_SERVICE_NAME = os.getenv("OTEL_SERVICE_NAME", "medical-agent")
+
 # ---- 注册开关：生产环境可关闭开放注册（改为邀请码/后台开通） ----
 REGISTER_ENABLED = os.getenv("REGISTER_ENABLED", "true").lower() in ("1", "true", "yes")
 

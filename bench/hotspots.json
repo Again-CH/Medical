@@ -1,0 +1,30 @@
+{
+  "database": "localhost:5432/medical_agent",
+  "checkpointer_write_amplification": {
+    "elapsed_ms": 239.0,
+    "rows_written": {
+      "checkpoints": 5,
+      "checkpoint_blobs": 4,
+      "checkpoint_writes": 9
+    },
+    "rows_total": 18
+  },
+  "vector_search": {
+    "rounds": 30,
+    "dim": 384,
+    "corpus_size": 64,
+    "embed_ms": {
+      "p50": 0.065,
+      "p95": 0.097
+    },
+    "search_ms": {
+      "p50": 1.67,
+      "p95": 2.827
+    }
+  },
+  "safety_gate": {
+    "rounds": 2000,
+    "us_per_call": 2.77,
+    "total_ms": 5.55
+  }
+}

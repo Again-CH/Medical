@@ -14,7 +14,7 @@ import jwt
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 from pydantic import BaseModel, Field
@@ -43,8 +43,12 @@ from .config import (
     CORS_ORIGINS,
     CSP_STRICT,
     MAX_MESSAGE_LEN,
+    METRICS_PUBLIC,
     MIN_PASSWORD_LEN,
     MIN_USERNAME_LEN,
+    OTEL_ENABLED,
+    OTEL_EXPORTER_OTLP_ENDPOINT,
+    OTEL_SERVICE_NAME,
     RATE_LIMIT_ENABLED,
     RATE_LIMIT_RULES,
     REGISTER_ENABLED,
@@ -76,6 +80,22 @@ from .graph import build_graph, build_pg_checkpointer
 from .guard import SAFE_REPLY, check_output, should_flush
 from .logging_config import get_logger, new_trace_id
 from .masking import mask_ip, mask_phone, mask_pii_text
+from .metrics import (
+    APPROVAL_WAIT,
+    APPROVALS_CREATED,
+    APPROVALS_RESOLVED,
+    CHAT_DURATION,
+    CHAT_FIRST_TOKEN,
+    CHAT_TIMEOUTS,
+    CHAT_TURNS,
+    GUARD_BLOCKS,
+    SAFETY_GATE_HITS,
+    observe_http,
+    set_pending_approvals,
+)
+from .metrics import (
+    render as render_metrics,
+)
 from .safety import (
     CONSENT_VERSION,
     DISCLAIMER_TEXT,
@@ -85,6 +105,9 @@ from .safety import (
 )
 from .seed import seed_all
 from .store import get_store
+from .supervisor import _keyword_intent  # 仅用于指标标签的兜底意图猜测（纯关键词，零成本）
+from .tracing import hex_to_trace_id, span
+from .tracing import shutdown as shutdown_tracing
 
 
 @asynccontextmanager
@@ -105,7 +128,16 @@ async def lifespan(app: FastAPI):
     cp = await build_pg_checkpointer()
     if cp is not None:
         globals()["graph"] = build_graph(checkpointer=cp)
+    if OTEL_ENABLED:
+        log.warning(
+            "tracing.enabled",
+            extra={
+                "service": OTEL_SERVICE_NAME,
+                "endpoint": OTEL_EXPORTER_OTLP_ENDPOINT or "(仅内存，不外发)",
+            },
+        )
     yield
+    shutdown_tracing()
 
 
 app = FastAPI(title="医疗预约诊疗 Agent", lifespan=lifespan)
@@ -268,6 +300,37 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class MetricsMiddleware(BaseHTTPMiddleware):
+    """采集 HTTP 层指标（QPS / 延迟分布 / 状态码）。
+
+    只埋路由模板（``/api/chat``）而非实际路径——带业务 ID 的路径会造成
+    高基数（high cardinality），是拖垮 Prometheus 最常见的用法错误。
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        start = time.monotonic()
+        status = 500
+        try:
+            resp = await call_next(request)
+            status = resp.status_code
+            return resp
+        finally:
+            route = request.scope.get("route")
+            path_tpl = getattr(route, "path", None) or _normalize_path(request.url.path)
+            observe_http(request.method, path_tpl, status, time.monotonic() - start)
+
+
+def _normalize_path(path: str) -> str:
+    """兜底：未匹配到路由时，把明显是 ID 的片段折叠成占位符，避免高基数。"""
+    parts = []
+    for seg in path.strip("/").split("/"):
+        if seg.isdigit() or (len(seg) >= 8 and "-" in seg):
+            parts.append("{id}")
+        else:
+            parts.append(seg)
+    return "/" + "/".join(parts)
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """统一注入安全响应头（纵深防御，不依赖反向代理也能生效）。
 
@@ -320,6 +383,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return resp
 
 
+app.add_middleware(MetricsMiddleware)
 app.add_middleware(
     RateLimitMiddleware,
     rules=RATE_LIMIT_RULES,
@@ -753,7 +817,14 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
     sub = user["sub"]
     log.info(
         "chat.start",
-        extra={"trace_id": trace_id, "user": sub, "thread_id": thread_id, "msg_len": len(message)},
+        extra={
+            "trace_id": trace_id,
+            # W3C 32 位格式：可直接粘到 Jaeger / Grafana Tempo 里定位同一次调用
+            "otel_trace_id": hex_to_trace_id(trace_id),
+            "user": sub,
+            "thread_id": thread_id,
+            "msg_len": len(message),
+        },
     )
 
     # ===== Tier-0 三道硬闸（确定性，先于一切 LLM 调用） =====
@@ -761,6 +832,7 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
     # 闸门 1：紧急硬闸 —— 胸痛/卒中/大出血等，强制 120 + 就近急诊，绝不交 LLM 发挥
     emg = assess_emergency(message)
     if emg is not None:
+        SAFETY_GATE_HITS.labels(gate="emergency").inc()
         log.warning(
             "safety.emergency_gate",
             extra={
@@ -791,6 +863,7 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
 
     # 闸门 2：知情同意 —— 仅患者；未签当前版本同意书则拦截，强制先同意
     if user.get("role") == "patient" and not _has_consent(sub):
+        SAFETY_GATE_HITS.labels(gate="consent").inc()
 
         async def _consent_stream():
             record_chat_log(
@@ -814,6 +887,7 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
     # 闸门 3：定位违规 —— 诊断/开处方请求，固定回复「不诊断不开方」
     scope = assess_scope_violation(message)
     if scope is not None:
+        SAFETY_GATE_HITS.labels(gate="scope").inc()
 
         async def _scope_stream():
             record_chat_log(
@@ -840,8 +914,9 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
         "patient_id": sub,
     }
 
-    async def gen():
+    async def _gen_impl():
         emitted_tokens = False
+        first_token_at: Optional[float] = None  # 首字节时间（患者体感延迟）
         collected: list[str] = []  # 累积所有推送给患者的文本，用于审计落库
         final_state = None
         out_buf = ""  # 待检测的发送缓冲（句级冲刷，兼顾流式体验与输出安全）
@@ -860,6 +935,16 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
                 fallback,
                 start,
             )
+            # intent 优先取图执行后的真实结果（真实 LLM 分类），回退到关键词猜测
+            intent = "unknown"
+            if isinstance(final_state, dict):
+                intent = final_state.get("intent") or intent
+            if intent == "unknown":
+                intent = _keyword_intent(message)
+            CHAT_TURNS.labels(intent=intent, turn=turn, tool_used=tool_used or "none").inc()
+            CHAT_DURATION.observe(time.monotonic() - start)
+            if first_token_at is not None:
+                CHAT_FIRST_TOKEN.observe(first_token_at - start)
             return turn
 
         def _guard(buf: str) -> Optional[str]:
@@ -868,6 +953,7 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
             hit = check_output(buf)
             if hit:
                 blocked = True
+                GUARD_BLOCKS.inc()
                 log.warning(
                     "guard.output_blocked",
                     extra={
@@ -887,7 +973,10 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
             if safe is None:
                 yield _event({"type": "safety_override", "text": SAFE_REPLY, "reason": "guard"})
                 return
+            nonlocal first_token_at
             yield _event({"type": "token", "text": safe})
+            if first_token_at is None:
+                first_token_at = time.monotonic()
             emitted_tokens = True
 
         # 每次对话显著展示免责声明（Tier-0 要求），前端渲染于助手回复下方
@@ -901,6 +990,7 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
                 break
             except asyncio.TimeoutError:
                 # LLM/下游卡死：受控中止，返回友好错误而非永久挂起
+                CHAT_TIMEOUTS.inc()
                 timeout_msg = "⚠️ 响应超时，请稍后重试或联系人工客服。"
                 collected.append(timeout_msg)
                 log.warning(
@@ -947,6 +1037,9 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
 
         interrupt_value = _extract_interrupt_value(config)
         if interrupt_value is not None:
+            APPROVALS_CREATED.labels(
+                action=(interrupt_value or {}).get("action") or "unknown"
+            ).inc()
             aid = get_store().create(thread_id, interrupt_value)
             collected.append(json.dumps(interrupt_value, ensure_ascii=False))
             yield _event({"type": "interrupt", "approval_id": aid, "payload": interrupt_value})
@@ -986,6 +1079,19 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
                     ),
                 }
             )
+
+    async def gen():
+        """外层包一个根 span，把本轮对话的所有子 span 串成一棵树。
+
+        没有这一层，supervisor / agent / tool / llm 的 span 会各自成为孤立的根，
+        在追踪平台里看到的是四段互不相干的调用，而不是一次完整问诊。
+        """
+        with span(
+            "chat.turn",
+            {"user": sub, "thread_id": thread_id, "trace_id": trace_id},
+        ):
+            async for ev in _gen_impl():
+                yield ev
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -1062,6 +1168,17 @@ async def resolve(req: ResolveRequest, user: dict = Depends(require_doctor)):
     rec = get_store().get(req.approval_id)
     if not rec:
         raise HTTPException(status_code=404, detail="approval not found")
+    action = (rec.get("payload") or {}).get("action") or "unknown"
+    # 审批等待时长：从审批单创建算起，直接反映患者干等多久
+    created_at = rec.get("created_at")
+    if created_at:
+        try:
+            APPROVAL_WAIT.observe(max((utcnow() - created_at).total_seconds(), 0))
+        except Exception:  # noqa: BLE001 - 指标不得影响主流程
+            pass
+    APPROVALS_RESOLVED.labels(
+        action=action, decision="approve" if req.decision == "approve" else "reject"
+    ).inc()
     decision = {"approved": req.decision == "approve", "reason": req.comment}
     thread_id = rec["thread_id"]
     config = {"configurable": {"thread_id": thread_id}}
@@ -1193,6 +1310,39 @@ async def health():
         except Exception:
             db_ok = False
     return {"status": "ok", "db": "up" if db_ok else "memory"}
+
+
+@app.get("/metrics")
+async def metrics(req: Request):
+    """Prometheus 抓取端点。
+
+    默认需 ``X-Admin-Key``：指标会暴露路由清单、版本与流量特征，
+    匿名可读等于给攻击者送一份系统地图。内网 / sidecar 抓取场景
+    可设 ``METRICS_PUBLIC=1`` 关闭鉴权。
+    """
+    if not METRICS_PUBLIC:
+        _require_admin_key(req)
+    set_pending_approvals(_count_pending_approvals())
+    body, content_type = render_metrics()
+    return Response(content=body, media_type=content_type)
+
+
+def _count_pending_approvals() -> Optional[int]:
+    """待审批积压：DB 不可用时返回 None（Gauge 保持上次值，不写 0 造成假象）。"""
+    if not is_db_enabled():
+        return None
+    try:
+        from sqlalchemy import text
+
+        from .db import get_session
+
+        with get_session() as s:
+            return (
+                s.execute(text("SELECT count(*) FROM approvals WHERE status = 'PENDING'")).scalar()
+                or 0
+            )
+    except Exception:
+        return None
 
 
 # ---------------- 业务数据只读端点（患者端真实数据展示） ----------------

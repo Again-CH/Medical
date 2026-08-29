@@ -18,6 +18,11 @@ __pycache__/
 approvals*.json
 eval_report.json
 
+# 压测产物：只保留人工可读的报告与热点剖析 JSON，
+# locust 自动生成的 report.html（内含整个前端库）与逐轮 CSV 不入库
+bench/report.html
+bench/*.csv
+
 # 本地 SQLite 数据库（测试/开发产物，Postgres 才是真库）
 *.db
 medical_agent.db

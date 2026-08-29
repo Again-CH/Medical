@@ -239,13 +239,13 @@
     </tr>
     <tr>
       <td><strong>可观测性</strong></td>
-      <td><span class="pill p-red">3 / 10</span></td><td><span class="pill p-red">3 / 10</span></td>
-      <td>只有结构化日志 + trace id；无 metrics、无链路追踪、无告警</td>
+      <td><span class="pill p-green">7 / 10</span></td><td><span class="pill p-green">7 / 10</span></td>
+      <td><span class="mono">/metrics</span> 覆盖 HTTP、对话链路、安全闸命中、审批积压；OTel 把一次问诊串成 chat.turn → supervisor → agent → tool/llm 的 span 树；日志带 W3C trace-id 可与追踪平台互查。尚未接告警规则</td>
     </tr>
     <tr>
       <td><strong>性能与容量</strong></td>
-      <td><span class="pill p-red">2 / 10</span></td><td><span class="pill p-red">2 / 10</span></td>
-      <td>无压测报告、无 p95 基线、无连接池/缓存调优证据</td>
+      <td><span class="pill p-amber">6 / 10</span></td><td><span class="pill p-amber">6 / 10</span></td>
+      <td>已有压测基线（30 并发 p50 270ms / p95 500ms / 83 RPS / 0 失败）与热点剖析（checkpointer 写放大 18 行每轮、pgvector 检索 1.5ms、安全闸 2.7μs）；缺连接池与缓存调优</td>
     </tr>
     <tr>
       <td><strong>部署与运维</strong></td>
@@ -300,11 +300,17 @@
 
 <p>按<strong>面试含金量</strong>排序——越靠前，越能换来"这个人有生产经验"的评价。</p>
 
-<h3>P1 · 做了就能把档次拉上去</h3>
+<h3>已完成 · 可观测性与性能基线</h3>
 <ul>
-  <li><strong>可观测性三件套</strong>：暴露 <span class="mono">/metrics</span>（prometheus_client）统计请求量、SSE 时长、审批等待时长、红线命中率；用 OpenTelemetry 把一次请求贯穿 supervisor → 子 Agent → 工具调用 → LLM 的四段 span 串起来；日志统一带 <span class="mono">trace_id</span>。目前只有 <span class="mono">/health</span>，等于"上线即盲飞"。</li>
-  <li><strong>LLM 侧可观测与成本</strong>：按患者 / 按 Agent / 按模型的 token 消耗与费用归因，接入 LangSmith 或 Phoenix。医疗场景的幻觉率和成本是老板最关心的两个数字，有这个数据你就能讲业务语言。</li>
-  <li><strong>性能基线与压测报告</strong>：用 k6 或 locust 出一份 p50/p95 延迟、SSE 并发上限、checkpointer 写放大、pgvector 检索耗时的报告。哪怕数字不好看，有基线本身就是工程成熟度。</li>
+  <li><strong>指标端点 <span class="mono">/metrics</span></strong>（<span class="mono">src/metrics.py</span>）：HTTP 层按路由模板统计 QPS 与延迟分布（刻意避免把带 ID 的路径写成标签，那会造成高基数拖垮 Prometheus）；对话链路分开统计<strong>端到端耗时</strong>与<strong>首字节延迟</strong>——这两者的差值才是"患者等了多久才开始看到字"。另有三道安全闸命中数、输出护栏拦截数、审批积压 Gauge 与审批等待时长。</li>
+  <li><strong>链路追踪</strong>（<span class="mono">src/tracing.py</span>）：一次问诊串成 <span class="mono">chat.turn → supervisor.classify → agent.&lt;intent&gt; → tool.call / llm.invoke</span> 的 span 树。实测一轮分诊：总 27ms，其中 agent 6ms、LLM 4ms——这类数据才能回答"慢在哪"。默认关闭且未装包自动降级为 no-op，绝不成为启动依赖。</li>
+  <li><strong>压测基线</strong>（<span class="mono">bench/压测基线报告.html</span>）：用 fake 模型压测，测的是系统自身而非供应商网络。30 并发下 83 RPS、p50 270ms、p95 500ms、零失败；并单独量化了登录（PBKDF2 60 万轮，p50 85ms）、checkpointer 写放大（18 行/轮）、pgvector 检索（1.5ms）、安全闸（2.7μs）。</li>
+</ul>
+
+<h3>P1 · 剩余可做的</h3>
+<ul>
+  <li><strong>告警规则与 SLO</strong>：指标和链路都有了，但没人盯着等于没有。建议配 Prometheus alerting rules（红线命中率突增、审批积压超阈值、5xx 比例）与 Grafana 面板，把"可观测"变成"有人响应"。</li>
+  <li><strong>LLM 侧成本归因</strong>：按患者 / 按 Agent / 按模型统计 token 消耗与费用。医疗场景的幻觉率与成本是老板最关心的两个数字，有这个才能讲业务语言。</li>
   <li><strong>韧性工程</strong>：LLM 超时熔断、失败降级到规则引擎、kill switch 一键停掉某个 Agent 的工具权限。现在有 <span class="mono">retry.py</span> 和 fake 兜底，但缺熔断与降级编排。</li>
 </ul>
 
@@ -324,10 +330,10 @@
     <div class="v" style="font-size:17px;line-height:1.5">初中级 / 转岗 AI 应用工程</div>
     <div class="n">LangGraph / Agent 方向，现在可直接投递</div>
   </div>
-  <div class="card">
+  <div class="card" style="border-color:#bcdcc8">
     <div class="k">资深/架构岗</div>
-    <div class="v" style="font-size:17px;line-height:1.5">建议补 P1 前两项</div>
-    <div class="n">可观测性 + 压测基线，约 2 天工作量</div>
+    <div class="v" style="font-size:17px;line-height:1.5">可投递</div>
+    <div class="n">可观测性与压测基线已补齐</div>
   </div>
   <div class="card">
     <div class="k">代码体量</div>
@@ -356,11 +362,15 @@
 </div>
 <div class="quote">
   <div class="q">"上生产你怎么观测它？"</div>
-  <div class="a">别硬撑。答："目前只有结构化日志和 health 检查，这是我列的第一个 P1——metrics 用 prometheus_client，链路用 OTel 把 supervisor 到工具调用串起来，LLM 侧接 Phoenix 做 token 和幻觉归因。"主动承认缺口 + 给出方案，比吹牛安全得多。</div>
+  <div class="a">三层：<strong>指标</strong>走 <span class="mono">/metrics</span>——除了常规的 QPS 与延迟，还单独统计三道安全闸命中数、输出护栏拦截数、审批积压与审批等待时长（医疗场景特有的合规与体验指标）；<strong>链路</strong>用 OTel 把一次问诊串成 chat.turn → supervisor → agent → tool/llm 的 span 树，日志里的 trace-id 是 W3C 格式，可直接粘到 Jaeger 里回放；<strong>日志</strong>是 JSON 结构化，便于入 Loki/ELK。<strong>主动补一句缺口</strong>：告警规则和 SLO 还没配，LLM 侧的 token 成本归因也没做。</div>
 </div>
 <div class="quote">
   <div class="q">"QPS 多少？p95 延迟多少？"</div>
-  <div class="a">没数据就别编数字。答："还没做压测，这是第二个 P1。架构上的瓶颈点我已经识别出来是 checkpointer 的写放大和 pgvector 检索，计划用 k6 出基线。"</div>
+  <div class="a">有实测数据了：fake 模型下 30 并发打满，<strong>83 RPS、p50 270ms、p95 500ms、零失败</strong>；带思考时间的正常负载下 p50 只有 8ms。<strong>关键是要说清为什么用 fake 模型测</strong>——真实模型下 p95 由 Deepseek 往返决定，测的是供应商网络不是我们的系统。再给出热点剖析：登录是 CPU 热点（PBKDF2 60 万轮，p50 85ms）、checkpointer 每轮写 18 行、pgvector 检索 1.5ms、安全闸 2.7μs。<strong>能说出"优化重点在减少 LLM 往返而非框架"这个判断，比报一个漂亮数字更有说服力。</strong></div>
+</div>
+<div class="quote">
+  <div class="q">"加了链路追踪，性能掉多少？"</div>
+  <div class="a">这是个陷阱题，答"几乎不掉"没有说服力。正确答法是：<strong>我做了对照实验——两轮极限压测唯一变量是 <span class="mono">OTEL_ENABLED</span>，结果是开启后延迟反而低 15%，但这不是追踪能加速，而是第二轮进程已预热。诚实结论是"30 并发下埋点开销低于测量噪声"，要拿准确数字需要两轮交替各跑多次取中位数，这是实验设计上我还欠的一步。</strong>——承认实验的局限，反而显得懂测量。</div>
 </div>
 <div class="quote">
   <div class="q">"这跟一个 CRUD 项目有什么区别？"</div>
@@ -379,18 +389,29 @@
   </tbody>
 </table>
 
-<h3>剩余建议（投递资深岗前可做）</h3>
+<h3>第二轮：可观测性与性能基线（已完成）</h3>
 <table>
-  <thead><tr><th style="width:8%">优先级</th><th>动作</th><th style="width:30%">收益</th></tr></thead>
+  <thead><tr><th style="width:8%">项</th><th>动作</th><th style="width:32%">验收结果</th></tr></thead>
   <tbody>
-    <tr><td><span class="pill p-amber">P1</span></td><td>加 <span class="mono">/metrics</span> 端点（prometheus_client）+ OTel 链路追踪</td><td>可观测性 3 分 → 6 分，堵住最常被问的缺口</td></tr>
-    <tr><td><span class="pill p-amber">P1</span></td><td>k6 出一份压测基线（p50/p95、SSE 并发）</td><td>性能 2 分 → 5 分</td></tr>
-    <tr><td><span class="pill p-blue">P2</span></td><td>README 补一页架构图 + 快速启动录屏</td><td>面试官 3 分钟看懂全貌</td></tr>
+    <tr><td><span class="pill p-green">M1</span></td><td><span class="mono">src/metrics.py</span> + <span class="mono">/metrics</span> 端点（X-Admin-Key 鉴权）</td><td>HTTP / 对话链路 / 安全闸 / 审批积压四类指标实测可抓取</td></tr>
+    <tr><td><span class="pill p-green">M2</span></td><td><span class="mono">src/tracing.py</span> + 四段 span 埋点</td><td>span 树实测：chat.turn 27ms → supervisor 0.03ms / agent 6ms → llm 4ms</td></tr>
+    <tr><td><span class="pill p-green">M3</span></td><td>locust 压测 + 热点剖析 + 脚本化报告</td><td>30 并发 83 RPS / p50 270ms / p95 500ms / 0 失败；<span class="mono">bench/压测基线报告.html</span></td></tr>
+  </tbody>
+</table>
+
+<h3>剩余建议（按需）</h3>
+<table>
+  <thead><tr><th style="width:8%">优先级</th><th>动作</th><th style="width:32%">收益</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill p-amber">P1</span></td><td>告警规则 + SLO + Grafana 面板</td><td>把"可观测"变成"有人响应"，可观测性 7 → 9 分</td></tr>
+    <tr><td><span class="pill p-amber">P1</span></td><td>LLM token 成本归因（按患者 / Agent / 模型）</td><td>能讲业务语言，成本与幻觉率可管</td></tr>
+    <tr><td><span class="pill p-amber">P1</span></td><td>韧性工程：熔断、降级编排、kill switch</td><td>可靠性 8 → 9 分</td></tr>
+    <tr><td><span class="pill p-blue">P2</span></td><td>多轮交替压测取中位数，修正开销对照实验</td><td>把"低于噪声"变成确定数字</td></tr>
   </tbody>
 </table>
 
 <footer>
-  本报告基于 2026-08-29 对 /Users/mac/Documents/Medical-care 的实测：本地 Postgres 实库查询、全量 pytest（sqlite 与 Postgres 双路径、各连跑两次）、ruff check / format、alembic 双方言漂移检查、离线评测、CI 配置审阅、clean clone 验证。所有数字均为实测值，非估算。
+  本报告基于 2026-08-29 对 /Users/mac/Documents/Medical-care 的实测：本地 Postgres 实库查询、全量 pytest（sqlite 与 Postgres 双路径、各连跑两次）、ruff check / format、alembic 双方言漂移检查、离线评测、CI 配置审阅、clean clone 验证、locust 压测（正常负载 / 极限吞吐 / 开启追踪对照三轮）与热点剖析。所有数字均为实测值，非估算。
 </footer>
 
 </div>

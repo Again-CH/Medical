@@ -27,6 +27,7 @@ from .memory import append_note
 from .state_utils import last_human
 from .tools import NAMESPACES
 from .tools.triage import _match_knowledge
+from .tracing import span
 
 log = get_logger()
 
@@ -131,11 +132,14 @@ def _invoke_tool(fn, args):
     一旦模型尝试越权访问他人档案会抛 ``PermissionError``。此处捕获后转为
     固定拒绝文本返回给模型，避免 500、也避免把异常细节回灌进对话上下文。
     """
-    try:
-        return fn.invoke(args or {})
-    except PermissionError:
-        log.warning("security.tool_denied", extra={"tool": getattr(fn, "name", "?")})
-        return _TOOL_DENIED
+    name = getattr(fn, "name", "?")
+    with span("tool.call", {"tool": name}):
+        try:
+            out = fn.invoke(args or {})
+            return out
+        except PermissionError:
+            log.warning("security.tool_denied", extra={"tool": name})
+            return _TOOL_DENIED
 
 
 # 人工审核门在审批存储里的 action 标识（也用于测试断言 / 前端展示）
@@ -239,7 +243,9 @@ async def run_agent_with_tools(llm, tools, state, system, sensitive_tools, appro
     MAX_STEPS = 4
 
     for _ in range(MAX_STEPS):
-        ai = await llm_bound.ainvoke(msgs + collected)
+        # LLM 调用单独成 span：回答"慢是慢在模型还是工具"的关键依据
+        with span("llm.invoke", {"model": type(llm_bound).__name__, "step": _}):
+            ai = await llm_bound.ainvoke(msgs + collected)
         collected.append(ai)
         calls = getattr(ai, "tool_calls", None) or []
         if not calls:
@@ -293,14 +299,15 @@ def _make_agent_node(intent: str):
         if config:
             tid = (config.get("configurable") or {}).get("thread_id", "")
         thread_ctx.set(tid)
-        collected, tool_result = await run_agent_with_tools(
-            get_llm(),
-            tools,
-            state,
-            SYSTEM_PROMPTS[intent],
-            SENSITIVE_TOOLS,
-            APPROVAL_ACTION.get(intent, "tool_approval"),
-        )
+        with span(f"agent.{intent}", {"intent": intent, "thread_id": tid}):
+            collected, tool_result = await run_agent_with_tools(
+                get_llm(),
+                tools,
+                state,
+                SYSTEM_PROMPTS[intent],
+                SENSITIVE_TOOLS,
+                APPROVAL_ACTION.get(intent, "tool_approval"),
+            )
         # 随访动作落库到长期记忆
         if intent == "followup":
             append_note(state["patient_id"], last_human(state))

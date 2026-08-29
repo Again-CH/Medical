@@ -4,6 +4,7 @@ from .config import LLM_MODE
 from .llm import FakeLLM, get_llm
 from .safety import assess_emergency, assess_scope_violation
 from .state_utils import last_human
+from .tracing import span
 
 INTENT_KEYWORDS = {
     "booking": ["挂号", "预约", "号源", "锁号", "确认预约", "确认挂号", "确定预约"],
@@ -68,6 +69,11 @@ async def supervisor(state):
     不再经 ``redline`` 中间层，避免两套口径分叉导致「网关拦截、编排放行」。
     """
     text = last_human(state)
+    with span("supervisor.classify", {"msg_len": len(text or "")}):
+        return await _route(text)
+
+
+async def _route(text: str) -> dict:
     emg = assess_emergency(text)
     if emg is not None:
         # 红线前置：写入 redline_reason 由 final_answer 组装急症提示。
