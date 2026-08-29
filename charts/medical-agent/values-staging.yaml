@@ -1,0 +1,45 @@
+# 预发环境：对齐生产配置（真模型、严格策略），但规模更小、可自动推进。
+# 用途：在上线前用接近生产的配置跑一遍，暴露「只在生产配置下才出现」的问题。
+replicaCount: 2
+
+image:
+  tag: "" # 由 CD 注入 git sha
+
+config:
+  appEnv: staging
+  llmMode: openai # 预发开始接真模型，验证真实链路
+  llmEgressPolicy: masked # PHI 出境需脱敏（LLM_EGRESS_POLICY=masked）
+  authFailMode: fail_closed
+  trustProxy: "1"
+  cspStrict: "1"
+  corsOrigins: "https://staging.example.com"
+
+# 预发用外部托管库（与生产同构），不随 chart 起 Postgres
+postgresql:
+  enabled: false
+
+secrets:
+  existingSecret: medical-agent-secrets
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 1Gi
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: staging.example.com
+      paths:
+        - path: /
+          pathType: Prefix

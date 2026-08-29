@@ -20,6 +20,7 @@ from langgraph.types import Command
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from . import feedback as fb
 from .auth import (
     UserExistsError,
     authenticate,
@@ -2026,6 +2027,68 @@ async def delete_my_data(user: dict = Depends(get_current_user)):
         "audit_anonymized_as": result.get("pseudonym"),
         "details": result,
     }
+
+
+# ---------------- 反馈驱动的自我优化闭环 ----------------
+# 患者评价 → 按意图聚类找知识缺口 → **生成提案** → 医护在 /api/review 审批
+# → 批准后落地知识库。医疗场景严禁无人监督的自我改写，故提案与落地分离。
+
+
+class FeedbackIn(BaseModel):
+    rating: str  # up / down
+    comment: str = ""
+    intent: str = ""
+    thread_id: str = ""
+    trace_id: str = ""
+
+
+@app.post("/api/patient/feedback")
+async def submit_feedback(body: FeedbackIn, user: dict = Depends(get_current_user)):
+    """患者对某一轮回答打分（up/down）并可选补充意见。
+
+    身份只来自 JWT，不接受外部 username —— 杜绝代他人提交评价。
+    """
+    msg = fb.record_feedback(
+        username=user["sub"],
+        rating=body.rating,
+        comment=body.comment,
+        intent=body.intent,
+        thread_id=body.thread_id,
+        trace_id=body.trace_id,
+    )
+    if "无效" in msg:
+        raise HTTPException(status_code=400, detail="评价无效（应为 up / down）")
+    return {"ok": True, "message": msg}
+
+
+@app.get("/api/admin/feedback")
+async def admin_list_feedback(
+    rating: str = "", limit: int = 100, _: None = Depends(_require_admin_key)
+):
+    """管理员查看近期反馈（可按 up/down 过滤）。"""
+    return {"items": fb.recent_feedback(limit=limit, rating=rating)}
+
+
+@app.get("/api/admin/feedback/gaps")
+async def admin_knowledge_gaps(threshold: int = 2, _: None = Depends(_require_admin_key)):
+    """查看「知识缺口」：同一意图下未处理的差评聚类（达阈值才算缺口）。"""
+    return {"threshold": threshold, "gaps": fb.find_knowledge_gaps(threshold)}
+
+
+@app.post("/api/admin/feedback/propose")
+async def admin_propose_updates(threshold: int = 2, user: dict = Depends(require_doctor)):
+    """把知识缺口转成**审批提案**（不直接改知识库），交由医护审核。"""
+    ids = fb.propose_from_gaps(threshold=threshold, requester=user.get("sub", "system"))
+    return {"ok": True, "created": ids, "note": "提案已在医护工作台待审批"}
+
+
+@app.post("/api/admin/feedback/apply/{approval_id}")
+async def admin_apply_update(approval_id: str, user: dict = Depends(require_doctor)):
+    """审批通过后把提案落地为知识条目。仅 APPROVED 状态可执行。"""
+    msg = fb.apply_approval(approval_id, resolved_by=user.get("sub", "doctor"))
+    if "不存在" in msg or "状态为" in msg or "类型不符" in msg or "失败" in msg or "缺少" in msg:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"ok": True, "message": msg}
 
 
 @app.get("/api/reports")

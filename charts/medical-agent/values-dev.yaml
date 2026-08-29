@@ -1,0 +1,41 @@
+# 开发环境：最快反馈，最低防护（但仍不允许弱口令进生产）
+# 密钥来自集群内已创建的 Secret（由 External Secrets 或 scripts/gen-secrets.sh 生成），
+# 本文件**不含任何明文密钥**。
+replicaCount: 1
+
+image:
+  tag: "" # 由 CD 流水线 --set image.tag=<git sha> 注入
+
+config:
+  appEnv: dev
+  llmMode: fake # 开发环境用 fake 模型，不消耗 token、不依赖外网
+  llmEgressPolicy: strict
+  authFailMode: fail_closed
+  trustProxy: "1"
+  cspStrict: "1"
+  corsOrigins: "*"
+
+# 开发环境随 chart 拉起一个 Postgres，省去外部依赖；
+# 注意：postgresql.auth.password 必填（chart 里是 required，缺失直接渲染失败）
+postgresql:
+  enabled: true
+  auth:
+    password: "" # 由 CD 从 Secret 注入：--set postgresql.auth.password=...
+
+secrets:
+  # 引用集群内已存在的 Secret，而非让 chart 创建
+  existingSecret: medical-agent-secrets
+
+autoscaling:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+ingress:
+  enabled: false

@@ -29,6 +29,7 @@ from typing import Optional, Protocol, runtime_checkable
 
 from sqlalchemy import text
 
+from .. import data_quality as dq
 from ..config import MAX_APPOINTMENTS_PER_DAY
 from ..context import patient_ctx
 from ..db import (
@@ -536,6 +537,12 @@ class DbHub:
         )
 
     def _record_lab_impl(self, pid, item, result, ref_range, abnormal, report_date) -> str:
+        # 数据质量门：脏数据绝不静默落库（错误的健康数据危害不亚于泄漏）
+        vr = dq.validate_lab(item, result, ref_range, abnormal, report_date)
+        allowed, note = dq.gate("lab", vr)
+        if not allowed:
+            log.warning("data_quality.rejected", extra={"kind": "lab", "item": item})
+            return f"[LIS] {note}"
         with get_patient_session(pid) as s:
             s.add(
                 LabReport(
@@ -548,7 +555,11 @@ class DbHub:
                 )
             )
             s.commit()
-        return f"[LIS] 已记录 {pid} 检验报告：{item}={result}（参考{ref_range}）{' 异常' if abnormal else ''}"
+        base = (
+            f"[LIS] 已记录 {pid} 检验报告：{item}={result}"
+            f"（参考{ref_range}）{' 异常' if abnormal else ''}"
+        )
+        return f"{base} {note}".rstrip()
 
     def record_vital(self, type: str, value: str, unit: str = "") -> str:
         """写入一条生命体征到当前登录患者本人的私有库（自动导入）。"""
@@ -561,16 +572,29 @@ class DbHub:
         )
 
     def _record_vital_impl(self, pid, type, value, unit, measured) -> str:
+        # 数据质量门：生理上不可能的数值直接拦下（如体温 370、血压 1200）
+        vr = dq.validate_vital(type, value, unit)
+        allowed, note = dq.gate("vital", vr)
+        if not allowed:
+            log.warning("data_quality.rejected", extra={"kind": "vital", "type": type})
+            return f"[vitals] {note}"
         with get_patient_session(pid) as s:
             s.add(
                 VitalSign(patient_id=pid, type=type, value=value, unit=unit, measured_at=measured)
             )
             s.commit()
-        return f"[vitals] 已记录 {pid} 生命体征：{type} {value}{unit or ''}"
+        base = f"[vitals] 已记录 {pid} 生命体征：{type} {value}{unit or ''}"
+        return f"{base} {note}".rstrip()
 
     def record_case_summary(self, text: str, category: str = "general") -> str:
         """写入一段病例小结/主诉到当前登录患者本人的长期记忆（自动导入）。"""
         pid = _require_patient()
+        # 数据质量门：空内容不写库（LLM 抽取失败时的常见产物）
+        vr = dq.validate_case_summary(text, category)
+        allowed, note = dq.gate("case_summary", vr)
+        if not allowed:
+            log.warning("data_quality.rejected", extra={"kind": "case_summary"})
+            return f"[memory] {note}"
         with get_patient_session(pid) as s:
             s.add(
                 ConversationMemory(

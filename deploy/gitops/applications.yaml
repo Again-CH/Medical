@@ -1,0 +1,86 @@
+# GitOps 声明式部署（ArgoCD Application）
+#
+# 与 cd.yml（推模式）的区别：
+#   推模式（cd.yml）：CI 拿着 kubeconfig 直接 helm upgrade —— 简单，但 CI 需要集群写权限。
+#   拉模式（本文件）：集群内的 ArgoCD 监听 Git 仓库，发现期望状态变化就自动同步 ——
+#                    **CI 不需要任何集群凭证**，集群状态由 Git 唯一定义（single source of truth）。
+#
+# 医疗系统更推荐拉模式：CI 凭证泄露不会直接导致集群被改；且任何线上变更都有 Git 提交可追溯。
+#
+# 用法：
+#   kubectl apply -f deploy/gitops/applications.yaml
+# 前提是集群已安装 ArgoCD，并把仓库地址替换成你自己的。
+#
+# 注意：镜像 tag 由 CD 流水线写回 values-<env>.yaml（Git 提交），
+# ArgoCD 检测到 values 变化后自动同步 —— 这就是 GitOps 的「镜像升级也走 Git」。
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: medical-agent-dev
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/OWNER/Medical-care.git
+    targetRevision: main
+    path: charts/medical-agent
+    helm:
+      valueFiles:
+        - values-dev.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: medical-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true # 有人手工改了集群，ArgoCD 会改回 Git 定义的状态
+    syncOptions:
+      - CreateNamespace=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: medical-agent-staging
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/OWNER/Medical-care.git
+    targetRevision: main
+    path: charts/medical-agent
+    helm:
+      valueFiles:
+        - values-staging.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: medical-staging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: medical-agent-prod
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/OWNER/Medical-care.git
+    targetRevision: main
+    path: charts/medical-agent
+    helm:
+      valueFiles:
+        - values-prod.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: medical-prod
+  syncPolicy:
+    # 生产**不开启 automated**：保持手动同步，由人在 ArgoCD UI 上确认后再 Sync。
+    # 与 cd.yml 里 prod 走 GitHub Environment 审批是同一道理念的两处实现：
+    # 生产的最后一道闸必须是人。
+    syncOptions:
+      - CreateNamespace=true

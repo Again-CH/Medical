@@ -1,0 +1,57 @@
+# 生产环境：最高防护、可水平扩展、强制人工审批后才会被 CD 部署。
+#
+# 与 dev/staging 的关键差异：
+# - llmEgressPolicy=strict（**PHI 一律不出境**，应配本地 Ollama 而非云端模型）；
+# - 多副本 + HPA，应对真实流量；
+# - 资源上限更高，并配 PodDisruptionBudget 级别的可用性保障（见 autoscaling）。
+# 本文件**不含任何明文密钥**，全部走 existingSecret 引用。
+replicaCount: 3
+
+image:
+  tag: "" # 由 CD 注入 git sha（可追溯到具体提交）
+
+config:
+  appEnv: prod
+  # 生产推荐 llmMode=ollama + 本地模型：PHI 不出境，满足医疗数据合规要求。
+  # 若必须用云端模型，llmEgressPolicy 至少设为 masked，并评估出境合规性。
+  llmMode: ollama
+  llmEgressPolicy: strict
+  authFailMode: fail_closed
+  trustProxy: "1"
+  cspStrict: "1"
+  corsOrigins: "https://medical.example.com"
+
+postgresql:
+  enabled: false # 生产用托管 RDS/PolarDB，连接串由 Secret 提供
+
+secrets:
+  existingSecret: medical-agent-secrets
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 65
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: "4"
+    memory: 2Gi
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: medical.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: medical-agent-tls
+      hosts:
+        - medical.example.com

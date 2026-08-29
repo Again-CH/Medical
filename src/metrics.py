@@ -96,6 +96,13 @@ APPROVALS_RESOLVED = Counter(
 APPROVALS_PENDING = Gauge(
     "approvals_pending", "当前待审批数量（患者正在干等的积压）", namespace=NAMESPACE
 )
+# 数据质量门拒收数：突增说明抽取/对接环节出问题（脏数据源头），是运维信号
+DATA_QUALITY_REJECTED = Counter(
+    "data_quality_rejected",
+    "入库前数据质量门拒收的记录数",
+    ["kind", "reason"],
+    namespace=NAMESPACE,
+)
 APPROVAL_WAIT = Histogram(
     "approval_wait_seconds",
     "审批单从创建到处理的等待时长（秒）",

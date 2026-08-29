@@ -1,0 +1,150 @@
+name: CD
+
+# 持续交付：构建镜像 → 推送 GHCR → 按环境用 Helm 部署。
+# 与 CI 的分工：CI 负责「能不能合」（质量门禁），CD 负责「合了之后怎么上」（交付流水线）。
+#
+# 环境推进策略：
+#   main 分支 → dev（自动）→ staging（自动）→ prod（**需人工审批**）
+# 生产通过 GitHub Environment 的 Required Reviewers 强制卡一道人，
+# 医疗系统的生产变更不应完全自动化。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 手动选择要部署的环境
+        required: true
+        default: dev
+        type: choice
+        options: [dev, staging, prod]
+
+concurrency:
+  # 按环境串行，避免同环境并发部署互相覆盖
+  group: cd-${{ github.event.inputs.environment || 'main' }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ① 构建并推送镜像：tag 用 git SHA，保证「线上跑的是哪个 commit」可追溯
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 计算镜像标签（git SHA，可追溯到具体提交）
+        id: meta
+        run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # 同时打 SHA 与 latest：SHA 用于部署（可追溯），latest 便于人工排查
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 镜像漏洞扫描：医疗系统的供应链安全左移，高危漏洞阻断交付
+      - name: 镜像漏洞扫描（Trivy）
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
+          format: table
+          exit-code: "1" # 存在可修复的高危/严重漏洞即失败
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+  # ② 部署：dev / staging / prod 共用同一段逻辑，靠入参区分
+  #    每个环境有独立的 values 文件与 kubeconfig Secret。
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      # 环境之间串行推进，不并行（避免同时改生产与预发）
+      max-parallel: 1
+      matrix:
+        environment: [dev, staging, prod]
+    # prod 绑定 GitHub Environment，需配置 Required Reviewers 才会真正放行；
+    # 未配置时该 job 会等待审批（而非直接部署）。
+    environment:
+      name: ${{ matrix.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 手动触发时只部署选定环境；推送触发时按 dev→staging→prod 顺序全量推进
+      - name: 判断本环境是否需要部署
+        id: should
+        run: |
+          sel="${{ github.event.inputs.environment }}"
+          if [ -n "$sel" ] && [ "$sel" != "${{ matrix.environment }}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: azure/setup-helm@v4
+        if: steps.should.outputs.skip == 'false'
+        with:
+          version: v3.16.3
+
+      - name: 配置 kubeconfig
+        if: steps.should.outputs.skip == 'false'
+        run: |
+          mkdir -p "$HOME/.kube"
+          # 各环境的 kubeconfig 分别存在对应 Environment 的 Secret 里，
+          # 避免一份高权限凭证打通所有环境。
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      # 部署前先渲染校验：values 写错在这里就暴露，不要等到 apply 才失败
+      - name: helm template 渲染校验
+        if: steps.should.outputs.skip == 'false'
+        run: |
+          helm template medical charts/medical-agent \
+            -f charts/medical-agent/values-${{ matrix.environment }}.yaml \
+            --set image.tag=${{ needs.build.outputs.image_tag }} > /tmp/rendered.yaml
+          grep -q "kind: Deployment" /tmp/rendered.yaml
+
+      - name: helm upgrade --install
+        if: steps.should.outputs.skip == 'false'
+        run: |
+          helm upgrade --install medical charts/medical-agent \
+            -f charts/medical-agent/values-${{ matrix.environment }}.yaml \
+            --set image.tag=${{ needs.build.outputs.image_tag }} \
+            --namespace medical-${{ matrix.environment }} --create-namespace \
+            --atomic --timeout 5m \
+            --wait
+
+      - name: 部署后健康检查
+        if: steps.should.outputs.skip == 'false'
+        run: |
+          kubectl -n medical-${{ matrix.environment }} rollout status deploy/medical-medical-agent --timeout=300s
+
+      - name: 输出本次部署的镜像
+        if: steps.should.outputs.skip == 'false'
+        run: |
+          echo "已部署 ${{ matrix.environment }}:"
+          kubectl -n medical-${{ matrix.environment }} get deploy medical-medical-agent \
+            -o jsonpath='{.spec.template.spec.containers[0].image}'

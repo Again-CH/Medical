@@ -131,8 +131,8 @@
 <div class="grid g4" style="margin:16px 0 8px">
   <div class="card" style="border-color:#bcdcc8">
     <div class="k">全量测试</div>
-    <div class="v" style="color:var(--green)">134 / 134</div>
-    <div class="n">sqlite 与 Postgres 双路径，含 10 项多租户 + 10 项告警 + 3 项 E2E</div>
+    <div class="v" style="color:var(--green)">187 / 187</div>
+    <div class="n">Postgres 全绿；sqlite 174 通过 + 13 跳过（反馈闭环需 pgvector）</div>
   </div>
   <div class="card" style="border-color:#bcdcc8">
     <div class="k">ruff check / format</div>
@@ -352,6 +352,16 @@
   <li><strong>前端工程化（第六轮已做）</strong>：Vite 构建 / 共享模块组件化 / Playwright E2E。</li>
 </ul>
 
+<h3>已完成 · 第七轮：真模型质量基线 + 数据质量门 + 反馈闭环 + CD/GitOps</h3>
+<p style="margin:0 0 12px">最后一轮补的是「上线后怎么持续变好」：<strong>质量怎么量化、脏数据怎么拦、反馈怎么沉淀、改动怎么交付</strong>。幻觉率用真实模型跑出了数字，CD 用真实 helm 逐环境渲染验证。</p>
+<ul>
+  <li><strong>真实 LLM 质量与幻觉率基线（<span class="mono">scripts/eval_llm_quality.py</span>）</strong>：用「可回答 / 不可回答」配对法量化幻觉——上下文里<strong>没有</strong>答案时给出具体数字却没承认不知道，即计为幻觉。判定规则确定性写死在代码里，<strong>不引入另一个模型当裁判</strong>（那等于用未经验证的系统验证另一个系统，评分会漂移、不可复现）。实测对比：<span class="mono">qwen2.5:1.5b</span>（本地）接地 100%、幻觉 0%，但<strong>越界拒答只有 66.7%</strong>——在「帮我开降压药」用例上，它加了免责声明却仍枚举了 ACE 抑制剂 / 钙通道阻滞剂 / 利尿剂等具体药物类别；<span class="mono">deepseek-chat</span> 则干净拒答并引导就医，三项全 100%。<strong>并补了检测器自检测试</strong>（人工构造编造回答，验证检测器确实抓得到）—— 一个永远通过的指标是没有价值的指标。</li>
+  <li><strong>ETL 数据质量门（<span class="mono">src/data_quality.py</span>）</strong>：检验 / 体征入库前拦截——完整性、值域（体温 370、血压 1200 这类生理不可能值直接拒）、单位一致性、未来日期，以及<strong>「abnormal 标记与参考范围自相矛盾」的语义一致性</strong>（数值落在范围内却标异常，说明抽取环节出错，比缺失更危险）。不合格<strong>进隔离区而非静默写库</strong>，拒收数接入 <span class="mono">/metrics</span>（突增即上游抽取 / 对接出问题）。仅警告级（如单位不在已知表内）放行但附提示，避免误杀合法数据。21 项测试。</li>
+  <li><strong>反馈驱动的自我优化闭环（<span class="mono">src/feedback.py</span> + 迁移 <span class="mono">2adb79c60a35</span>）</strong>：患者评价 → 按意图聚类找知识缺口（<strong>阈值 2：单条差评是噪声，反复出现才是缺口</strong>）→ 生成知识更新<strong>提案</strong> → 医护在既有 HITL 审批门审核 → 批准后幂等写入知识库。<strong>核心安全属性：系统绝不能无人监督地改写自己的知识库</strong>——患者反馈是信号不是真理，让 Agent 据此自动改医学知识，等于把「什么是对的」交给会漂移的非确定性系统。故「提案」与「落地」分成两步，并用测试钉死「PENDING 不得提前落地」。13 项测试。</li>
+  <li><strong>多模态扩展点（<span class="mono">src/multimodal.py</span>，如实标注）</strong>：本机无视觉模型、无医学影像语料、无临床验证，因此<strong>不做假的影像分析</strong>——在医疗场景造一个「看起来像功能的玩具」比没有更危险。交付的是有契约、有测试、有明确失败语义的接入点：无后端时返回「暂不支持 + 引导专科门诊」而<strong>绝不编造结论</strong>，后端异常时降级且不拖垮主链路。真后端就绪时主链路无需改动。</li>
+  <li><strong>CD / GitOps（<span class="mono">.github/workflows/cd.yml</span> + 三套环境 values + ArgoCD Application）</strong>：镜像按 <strong>git SHA 打标</strong>（线上跑的是哪个 commit 可追溯）→ Trivy 扫出高危漏洞即阻断 → 按 dev→staging→prod 推进，<strong>prod 走 GitHub Environment 强制人工审批</strong>。三套 <span class="mono">values-{dev,staging,prod}.yaml</span> 差异明确（dev 用 fake 模型 + 随 chart PG；staging 接真模型 + masked；<strong>prod 用本地 Ollama + strict，PHI 不出境</strong>），并用真实 helm 逐环境渲染验证（dev 7 / staging 5 / prod 5 资源）。另附 ArgoCD 拉模式声明：<strong>prod 不开 automated</strong>，由人确认后再 Sync。</li>
+</ul>
+
 <h2>五、面试可用性判定</h2>
 
 <div class="grid g3" style="margin-bottom:18px">
@@ -372,7 +382,7 @@
   </div>
 </div>
 
-<h3>十个必背故事（每个都要能说出文件和数据）</h3>
+<h3>十二个必背故事（每个都要能说出文件和数据）</h3>
 <ul>
   <li><strong>HITL 中断恢复</strong>：讲 interrupt 挂在审批门 → 状态写进 Postgres checkpointer → 医护端 <span class="mono">/api/review/resolve</span> 批准 → <span class="mono">Command(resume=...)</span> 恢复 → 服务重启也不丢。配一句"审批单 payload 里带完整 args 和 requester，resolve 时记 resolved_by，审计可追溯"。</li>
   <li><strong>PHI 隔离与越权防护</strong>：讲工具 schema 里<strong>没有 patient_id 参数</strong>，身份只从 JWT 取（对象级授权 OLP），thread_id 派生为 <span class="mono">{role}:{sub}:{client_tid}</span>；再配 <span class="mono">tests/test_security_isolation.py</span> 里 293 行越权 PoC 回归。这是本项目最硬的一块。</li>
@@ -384,6 +394,8 @@
     <li><strong>IaC 的 fail-closed（第六轮新增素材）</strong>：讲 Helm 的 Secret/ConfigMap 分离与「缺失即失败」——<span class="mono">envFrom.secretRef</span> 没配 Secrets 时 Pod 直接起不来，等价于 compose 的 <span class="mono">${VAR:?}</span> 校验，杜绝「镜像里藏着弱默认密码悄悄上线」。再说安全上下文：非 root（uid 10001）、<span class="mono">readOnlyRootFilesystem</span>、<span class="mono">drop ALL</span>、可写目录只留 <span class="mono">/app/data</span> 的 emptyDir。这类「默认就安全、配错就起不来」的约束，比文档里的口号更有说服力。</li>
     <li><strong>前端工程化：克制也是一种设计（第六轮新增素材）</strong>：讲清楚为什么 Vite + 原生 ES 模块而不引 React/Vue——前端只是 Agent 的演示入口与病历可视化，引框架只会加体积与攻击面；用 Vite 满足「构建/组件化/E2E」三件事后，共享模块（api/dom/state/constants/csp-events）消除重复，网关同源托管 <span class="mono">dist/</span> + <span class="mono">/assets</span> 且保留严格 CSP（模块脚本由 <span class="mono">'self'</span> 放行，仅内联脚本需 nonce），Playwright E2E 把「患者/医护页面加载 + 登录」钉成 3 项冒烟。能说出"<strong>严格 CSP 下如何既用构建工具又不破坏安全模型</strong>"，比堆框架更显功力。</li>
     <li><strong>自动化门禁查不出的合规漏洞（第六轮最强素材）</strong>：讲你如何发现「主库里混进了 5 张患者私有表且存着真实 PHI」。起因是 Postgres 全量回归里「删除权」用例报外键冲突（<span class="mono">conversation_memory_patient_id_fkey</span>），追下去发现<strong>初始迁移建表时私有模型还挂在共享 Base 下</strong>，于是被建进了共享主库；后来架构演进为「每患者独立 SQLite」，历史表却从未清理。<strong>这里有三层可以显摆</strong>：① <span class="mono">alembic check</span> 只比「ORM 模型 vs 迁移」，永远发现不了「库里多了不该有的表」——<strong>不变量需要专门的检查来守，不是上工具就自动有了</strong>；② 修法分两步且顺序不能颠倒——先跑 <span class="mono">scripts/migrate_phi_to_private_dbs.py</span> 幂等搬运（实测中 <span class="mono">alice.db</span> 根本不存在，她的 PHI 只在主库有，不抢救就删表等于删库），再由迁移 <span class="mono">9c4f2e8a71d3</span> 删表；③ 加测试时不依赖种子数据——<strong>自建专用患者</strong>，因为全新库上 TestClient 不触发 lifespan 播种，依赖 <span class="mono">alice</span> 会让用例 skip，而<strong>跳过的断言等于没测</strong>。这个故事把「会追根因、懂合规、尊重数据」三件事一次讲完。</li>
+    <li><strong>幻觉率怎么测才可信（第七轮新增素材）</strong>：面试官问"你怎么保证不幻觉"，最忌讳答"我加了 prompt"或"我用了 RAG"。正确的答法是先讲度量：<strong>用「可回答 / 不可回答」配对法</strong>——给模型一段资料，一半问题的答案在资料里（考抽取），一半不在（考它敢不敢承认不知道）；资料里没有答案却给出具体数字且没说"无法确定"，就计为幻觉。<strong>关键判断是：不找另一个模型来打分</strong>，那等于用未经验证的系统验证另一个系统，分数会漂移、不可复现；判定规则要写死在代码里，谁跑都一样。然后给真实数字：本地 <span class="mono">qwen2.5:1.5b</span> 接地 100%、幻觉 0%，但<strong>越界拒答只有 66.7%</strong>——它会在"我无法开药"之后仍枚举 ACE 抑制剂/钙通道阻滞剂等具体药类；云端 <span class="mono">deepseek-chat</span> 三项全 100%。<strong>最后一句加分：我给检测器本身也写了测试</strong>（人工构造编造回答验证它抓得到），因为一个永远通过的指标是没有价值的指标——而且当前 10 条用例两模型都满分，说明存在天花板效应，评测集还要扩。敢说自己的度量有局限，比报一个漂亮数字可信得多。</li>
+    <li><strong>反馈闭环为什么必须有人把关（第七轮新增素材）</strong>：讲"系统能自我进化"听起来很酷，但在医疗场景这是<strong>反模式</strong>。患者反馈是信号不是真理——可能误解、可能恶意、可能只是嫌措辞不好听。让 Agent 据此自动改医学知识，等于把「什么是对的」交给一个会漂移的非确定性系统。所以我把闭环拆成：<strong>采集 → 按意图聚类（阈值 2，单条差评是噪声，反复出现才是缺口）→ 生成提案 → 医护在既有 HITL 审批门审核 → 批准后落地</strong>。<strong>可以显摆的两个细节</strong>：① 复用同一套 <span class="mono">approvals</span> 表与医护工作台，不另起炉灶；② 写了测试钉死「PENDING 状态不得提前写入知识库」和「非知识更新类型的审批单不得被执行」，把安全属性变成可回归的断言而不是口头承诺。这体现的是"敢用 AI 但知道边界在哪"。</li>
   </ul>
 
 <h3>四个会被追问的坑，提前备好答案</h3>
@@ -457,7 +469,10 @@
 <table>
   <thead><tr><th style="width:8%">优先级</th><th>动作</th><th style="width:32%">收益</th></tr></thead>
   <tbody>
-    <tr><td><span class="pill p-blue">P2</span></td><td>多轮交替压测取中位数，修正开销对照实验</td><td>把"低于噪声"变成确定数字</td></tr>
+    <tr><td><span class="pill p-blue">P3</span></td><td>多轮交替压测取中位数，修正开销对照实验</td><td>把"低于噪声"变成确定数字</td></tr>
+    <tr><td><span class="pill p-blue">P3</span></td><td>扩充幻觉评测集（现 10 条，两模型均满分 → 存在天花板效应）</td><td>让评测能区分更强的模型</td></tr>
+    <tr><td><span class="pill p-blue">P3</span></td><td>PHI 密钥定期轮换（轮密 + 旧密兼容）、备份恢复演练</td><td>补齐合规运维闭环</td></tr>
+    <tr><td><span class="pill p-blue">P3</span></td><td>接入真实视觉后端（扩展点已就位 <span class="mono">src/multimodal.py</span>）</td><td>补上多模态影像能力</td></tr>
     <tr><td><span class="pill p-green">已做</span></td><td>部署 IaC（Helm chart + Secret 管理脚手架，见第六轮）</td><td>从"能跑"到"能交付运维"</td></tr>
     <tr><td><span class="pill p-green">已做</span></td><td>数据合规深化（PHI 列加密 / 留存最小化 / 删除权，见第五轮）</td><td>满足医疗等保/个人信息保护法要求，剩密钥轮换与备份演练</td></tr>
     <tr><td><span class="pill p-green">已做</span></td><td>多院区多租户（科室 + 业务主数据全表 tenant_id，见第六轮）</td><td>医疗信息化刚需，10 项隔离测试转绿</td></tr>
@@ -481,7 +496,7 @@
 </table>
 
 <footer>
-  本报告基于 2026-08-30 对 /Users/mac/Documents/Medical-care 的实测：本地 Postgres 实库查询、全量 pytest（sqlite 与 Postgres 双路径，<strong>134/134 全绿</strong>）、ruff check / format、alembic 双方言漂移检查、离线评测、CI 配置审阅、clean clone 验证、locust 压测（正常负载 / 极限吞吐 / 开启追踪对照三轮）与热点剖析、第三轮韧性工程（熔断器 / 运行时 kill switch / LLM·工具降级编排，15 项新增测试）、第四轮告警/SLO/Grafana 栈与 LLM 成本归因（src/cost.py + 7 项新增测试）、第五轮数据合规深化（应用层透明列加密 EncryptedText 双后端、留存最小化 apply_retention、删除权 erase_patient，新增 src/phi.py / src/retention.py / 迁移 g7b8c9d0e1f2 / 运维脚本 / 合规文档 + 12 项新增测试）、<strong>第六轮多租户 + IaC + 前端工程化 + PHI 隔离修复</strong>（tenants 表与 tenant_id 覆盖科室主数据 0b8ce330fa1c 与业务主数据 262ab07cc03b、后者按既有关系派生回填且医生租户与科室 100% 一致、10 项租户隔离测试全绿、users 保持全局并由测试固化；Helm chart 经<strong>真实 helm v3.16.3 CLI</strong> 验证 lint 0 failed / template 双模式渲染 / fail-closed 实测，并修掉 securityContext 层级错误；Vite 双入口构建 + src/shared 组件化 + 网关同源托管 dist/assets 保留严格 CSP + Playwright E2E 3/3；<strong>修复 PHI 隔离漏洞</strong>——主库混入 5 张患者私有表且含真实 PHI，先经 scripts/migrate_phi_to_private_dbs.py 幂等抢救（alice 数据原只存主库）再由迁移 9c4f2e8a71d3 删表，主库 26→21 表，解除「删除权」在 Postgres 上的外键阻塞）；<strong>告警闭环落地</strong>（去掉 null receiver 占位 → 真实 webhook + 三档分级路由 10s/1m/5m 触达与 30m/4h/24h 重复 + 抑制规则；新增纯标准库本地接收端 scripts/alert_sink.py 与生产版 alertmanager.production.yml（url_file 引用密钥），真实进程端到端验证 /health 200、投递 critical 告警返回 persisted:1 并打印 [CRITICAL] firing ... 落 JSONL，tests/test_alerting.py 10 项全绿）。所有数字均为实测值，非估算。
+  本报告基于 2026-08-30 对 /Users/mac/Documents/Medical-care 的实测：本地 Postgres 实库查询、全量 pytest（Postgres <strong>187/187 全绿</strong>、sqlite 174 通过 + 13 跳过（反馈闭环依赖 pgvector）、ruff 81 文件全绿、alembic 零漂移）、ruff check / format、alembic 双方言漂移检查、离线评测、CI 配置审阅、clean clone 验证、locust 压测（正常负载 / 极限吞吐 / 开启追踪对照三轮）与热点剖析、第三轮韧性工程（熔断器 / 运行时 kill switch / LLM·工具降级编排，15 项新增测试）、第四轮告警/SLO/Grafana 栈与 LLM 成本归因（src/cost.py + 7 项新增测试）、第五轮数据合规深化（应用层透明列加密 EncryptedText 双后端、留存最小化 apply_retention、删除权 erase_patient，新增 src/phi.py / src/retention.py / 迁移 g7b8c9d0e1f2 / 运维脚本 / 合规文档 + 12 项新增测试）、<strong>第六轮多租户 + IaC + 前端工程化 + PHI 隔离修复</strong>（tenants 表与 tenant_id 覆盖科室主数据 0b8ce330fa1c 与业务主数据 262ab07cc03b、后者按既有关系派生回填且医生租户与科室 100% 一致、10 项租户隔离测试全绿、users 保持全局并由测试固化；Helm chart 经<strong>真实 helm v3.16.3 CLI</strong> 验证 lint 0 failed / template 双模式渲染 / fail-closed 实测，并修掉 securityContext 层级错误；Vite 双入口构建 + src/shared 组件化 + 网关同源托管 dist/assets 保留严格 CSP + Playwright E2E 3/3；<strong>修复 PHI 隔离漏洞</strong>——主库混入 5 张患者私有表且含真实 PHI，先经 scripts/migrate_phi_to_private_dbs.py 幂等抢救（alice 数据原只存主库）再由迁移 9c4f2e8a71d3 删表，主库 26→21 表，解除「删除权」在 Postgres 上的外键阻塞）；<strong>告警闭环落地</strong>（去掉 null receiver 占位 → 真实 webhook + 三档分级路由 10s/1m/5m 触达与 30m/4h/24h 重复 + 抑制规则；新增纯标准库本地接收端 scripts/alert_sink.py 与生产版 alertmanager.production.yml（url_file 引用密钥），真实进程端到端验证 /health 200、投递 critical 告警返回 persisted:1 并打印 [CRITICAL] firing ... 落 JSONL，tests/test_alerting.py 10 项全绿）；<strong>第七轮质量基线与持续交付</strong>（scripts/eval_llm_quality.py 用可回答/不可回答配对法量化幻觉，真实模型实测：本地 qwen2.5:1.5b 接地 100%/幻觉 0%/越界拒答 66.7%——在开药用例上仍枚举具体药物类别，deepseek-chat 三项全 100%，并配 tests/test_eval_quality.py 12 项检测器自检；src/data_quality.py 数据质量门 21 项测试，拦生理不可能值与 abnormal 标记矛盾，拒收进隔离区并计数；src/feedback.py 反馈闭环 13 项测试，聚合差评生成提案并经 HITL 审批后才落地，测试钉死 PENDING 不得提前写入；src/multimodal.py 如实标注为无后端的扩展点，7 项契约测试保证无后端时明确说不支持而非编造；.github/workflows/cd.yml + 三套环境 values + ArgoCD Application，镜像按 git SHA 打标、Trivy 阻断高危、prod 强制人工审批，三套 values 经真实 helm 逐环境渲染验证）。所有数字均为实测值，非估算。
 </footer>
 
 </div>

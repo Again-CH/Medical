@@ -252,6 +252,30 @@ class ChatLog(Base):
     created_at = mapped_column(DateTime, default=utcnow)
 
 
+class Feedback(Base):
+    """患者对某轮回答的评价（反馈驱动自我优化的输入）。
+
+    - 只存「哪一轮、好/差、可选文字补充、命中意图」，**不复制对话正文**——
+      正文已落在 ``chat_logs``（且经 PHI 脱敏/加密），此处不再二次留存 PHI。
+    - ``comment`` 可能含健康信息，故用 ``EncryptedText`` 加密落盘。
+    - ``proposed`` 标记该条反馈是否已被纳入知识更新提案，避免同一批反馈
+      被反复提案（幂等）。
+    - 用途：``src/feedback.py`` 聚合差评 → 生成知识库更新提案 → **走 HITL 审批门**
+      → 批准后写入知识库。医疗场景下严禁无人监督的自我改写。
+    """
+
+    __tablename__ = "feedback"
+    id = mapped_column(Integer, primary_key=True)
+    username = mapped_column(String(64), index=True, nullable=False)
+    thread_id = mapped_column(String(128), index=True)
+    trace_id = mapped_column(String(64), index=True)  # 关联 chat_logs / OTel trace
+    intent = mapped_column(String(32), default="")  # 命中意图，用于归类知识缺口
+    rating = mapped_column(String(8), nullable=False)  # up / down
+    comment = mapped_column(EncryptedText)  # 患者补充（可能含健康信息）
+    proposed = mapped_column(Boolean, default=False, nullable=False)
+    created_at = mapped_column(DateTime, default=utcnow)
+
+
 class ConsentRecord(Base):
     """用户知情同意书签署记录（Tier-0 法律责任红线）。
 
