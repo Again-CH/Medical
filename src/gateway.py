@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import hmac
 import json
 import secrets
@@ -103,6 +102,7 @@ from .resilience import (
     all_breakers,
     reset_breakers,
 )
+from .retention import apply_retention, erase_patient
 from .safety import (
     CONSENT_VERSION,
     DISCLAIMER_TEXT,
@@ -1427,6 +1427,47 @@ async def llm_cost(req: Request, reset: bool = False):
     return cost_breakdown()
 
 
+@app.post("/api/admin/retention")
+async def admin_retention(req: Request, dry_run: bool = False):
+    """运行 PHI 留存策略（需 X-Admin-Key）。
+
+    默认执行清理；``?dry_run=1`` 只统计不改写（合规审计前的安全预览）。
+    返回各作用域处理计数，便于接入 ``phi_purged_total`` 指标与告警。
+    """
+    _require_admin_key(req)
+    body = {}
+    try:
+        body = await req.json() or {}
+    except Exception:  # noqa: BLE001 - 空 body 也允许
+        body = {}
+    do_dry = dry_run or bool(body.get("dry_run"))
+    return apply_retention(dry_run=do_dry)
+
+
+@app.post("/api/admin/erase")
+async def admin_erase(req: Request):
+    """管理员触发患者删除权（需 X-Admin-Key）：整体抹除某患者全部可定位数据。
+
+    请求体：``{"username": "...", "confirm": true}``。``confirm`` 必须为 true，
+    防止误触。等价于患者自助 ``DELETE /api/patient/me`` 的管理员版本，共享同一完整路径。
+    """
+    _require_admin_key(req)
+    try:
+        body = await req.json() or {}
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="请求体需为 JSON") from None
+    username = (body.get("username") or "").strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="username 必填")
+    if not body.get("confirm"):
+        raise HTTPException(status_code=400, detail="需显式 confirm=true 确认删除")
+    try:
+        result = erase_patient(username, actor="admin")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    return {"ok": True, "result": result}
+
+
 def _count_pending_approvals() -> Optional[int]:
     """待审批积压：DB 不可用时返回 None（Gauge 保持上次值，不写 0 造成假象）。"""
     if not is_db_enabled():
@@ -1821,45 +1862,24 @@ async def patient_exam_flow(user: dict = Depends(get_current_user)):
 # ---------------- 患者数据主体权利（删除权 / 被遗忘权） ----------------
 @app.delete("/api/patient/me")
 async def delete_my_data(user: dict = Depends(get_current_user)):
-    """患者行使删除权：清除本人健康档案、检验/体征/随访记录与同意记录。
+    """患者行使删除权（个人信息保护法第 47 条 / GDPR 第 17 条）：整体抹除本人数据。
 
-    设计要点（个人信息保护法第 47 条）：
-    - **档案清除**：删除该患者的独立 SQLite 库（data/<username>.db），
-      检验报告、生命体征、随访提醒、随访记忆一并物理删除。
-    - **同意撤回**：删除知情同意记录（撤回同意后不得继续处理）。
-    - **审计匿名化**：对话审计日志不删除（合规要求保留操作痕迹），
-      但把 patient_id 替换为不可逆的匿名标识，切断与本人的关联。
-    - 全程落审计，可证明「删除发生在何时、由谁请求」。
+    委托给 ``src/retention.erase_patient`` 执行与管理员擦除完全一致的完整路径：
+    删除独立私有库、主库一切可定位记录（账号/令牌/预约/检查单/审批/对话/知情同意），
+    并对含标识符的历史审计日志做盐哈希假名化，保留可追溯性而不留存直接标识符。
     """
     sub = user["sub"]
-    removed_db = False
-    # ① 患者私有库（物理删除）
-    try:
-        from .db import _patient_db_path
-
-        path = Path(_patient_db_path(sub))
-        if path.exists():
-            path.unlink()
-            removed_db = True
-    except Exception as e:  # noqa: BLE001
-        log.error("privacy.erase_db_failed", extra={"user": sub, "error": repr(e)})
-
-    # ② 同意记录撤回 + ③ 审计日志匿名化
-    anon = "erased:" + hashlib.sha256(sub.encode("utf-8")).hexdigest()[:16]
-    if is_db_enabled():
-        try:
-            with get_session() as s:
-                s.query(ConsentRecord).filter(ConsentRecord.username == sub).delete()
-                s.query(ChatLog).filter(ChatLog.patient_id == sub).update(
-                    {"patient_id": anon}, synchronize_session=False
-                )
-                s.commit()
-        except Exception as e:  # noqa: BLE001
-            log.error("privacy.anonymize_failed", extra={"user": sub, "error": repr(e)})
-
-    record_audit(sub, "patient_data_erased", {"removed_private_db": removed_db})
-    log.warning("privacy.erased", extra={"user": sub, "removed_db": removed_db})
-    return {"ok": True, "removed_private_db": removed_db, "audit_anonymized_as": anon}
+    result = erase_patient(sub, actor=sub)
+    record_audit(
+        sub, "patient_data_erased", {"scopes": "all", "pseudonym": result.get("pseudonym")}
+    )
+    log.warning("privacy.erased", extra={"user": sub, "pseudonym": result.get("pseudonym")})
+    return {
+        "ok": True,
+        "removed_private_db": bool(result.get("patient_db_file")),
+        "audit_anonymized_as": result.get("pseudonym"),
+        "details": result,
+    }
 
 
 @app.get("/api/reports")

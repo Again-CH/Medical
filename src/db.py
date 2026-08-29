@@ -32,6 +32,8 @@ from sqlalchemy.orm import (
     sessionmaker,
 )
 
+from .phi import EncryptedText  # 透明 PHI 列加密（底层仍是 TEXT）
+
 # pgvector 向量类型：仅当 python 包可用时引入（未安装则 demo/sqlite 模式仍能正常 import）。
 # 向量表（knowledge_documents）只在启用 Postgres 时由迁移创建，故缺失该包不影响无 DB 路径。
 try:
@@ -60,8 +62,8 @@ class User(Base):
     id = mapped_column(Integer, primary_key=True)
     username = mapped_column(String(64), unique=True, nullable=False, index=True)
     password_hash = mapped_column(String(160), nullable=False)
-    full_name = mapped_column(String(128))
-    phone = mapped_column(String(32))
+    full_name = mapped_column(EncryptedText)  # 患者真实姓名（PII，静态加密）
+    phone = mapped_column(EncryptedText)  # 患者手机号（直接标识符，静态加密）
     # 安全字段：token_version 用于全局吊销（登出/改密即作废全部令牌）；锁用于防爆破
     token_version = mapped_column(Integer, default=0, nullable=False)
     failed_attempts = mapped_column(Integer, default=0, nullable=False)
@@ -130,7 +132,7 @@ class Approval(Base):
     id = mapped_column(String(64), primary_key=True)
     thread_id = mapped_column(String(128), index=True)
     action = mapped_column(String(64))
-    payload = mapped_column(Text)  # JSON 文本
+    payload = mapped_column(EncryptedText)  # JSON 文本（敏感动作参数，可能含 PHI）
     status = mapped_column(String(16), default="PENDING")
     created_at = mapped_column(DateTime, default=utcnow)
     resolved_at = mapped_column(DateTime)
@@ -150,7 +152,7 @@ class ConversationMemory(PatientBase):
     thread_id = mapped_column(String(64), index=True)
     patient_id = mapped_column(String(64), nullable=False, index=True)  # 存 username
     key = mapped_column(String(64))
-    value = mapped_column(Text)
+    value = mapped_column(EncryptedText)  # 随访笔记/病例小结（自由文本 PHI）
     created_at = mapped_column(DateTime, default=utcnow)
 
 
@@ -159,7 +161,7 @@ class LabReport(PatientBase):
     id = mapped_column(Integer, primary_key=True)
     patient_id = mapped_column(String(64), nullable=False, index=True)  # 存 username
     item = mapped_column(String(64), nullable=False)
-    result = mapped_column(String(64))
+    result = mapped_column(EncryptedText)  # 检验数值（患者健康数据）
     ref_range = mapped_column(String(64))
     abnormal = mapped_column(Boolean, default=False)
     report_date = mapped_column(String(10))
@@ -170,7 +172,7 @@ class VitalSign(PatientBase):
     id = mapped_column(Integer, primary_key=True)
     patient_id = mapped_column(String(64), nullable=False, index=True)  # 存 username
     type = mapped_column(String(32), nullable=False)
-    value = mapped_column(String(32))
+    value = mapped_column(EncryptedText)  # 生命体征读数（患者健康数据）
     unit = mapped_column(String(16))
     measured_at = mapped_column(String(19))
 
@@ -179,7 +181,7 @@ class Reminder(PatientBase):
     __tablename__ = "reminders"
     id = mapped_column(Integer, primary_key=True)
     patient_id = mapped_column(String(64), nullable=False, index=True)  # 存 username
-    content = mapped_column(Text, nullable=False)
+    content = mapped_column(EncryptedText, nullable=False)  # 提醒内容（可能含健康信息）
     remind_at = mapped_column(String(19))
     channel = mapped_column(String(16), default="APP")
     status = mapped_column(String(16), default="PENDING")
@@ -212,8 +214,8 @@ class ChatLog(Base):
     patient_id = mapped_column(String(64), index=True)  # 存 username
     thread_id = mapped_column(String(128), index=True)
     intent = mapped_column(String(32), default="chat")  # chat/human/system
-    input_text = mapped_column(Text)  # 患者本轮输入
-    output_text = mapped_column(Text, default="")  # 实际推送给患者的文本
+    input_text = mapped_column(EncryptedText)  # 患者本轮输入（PHI）
+    output_text = mapped_column(EncryptedText, default="")  # 实际推送给患者的文本（可能含 PHI）
     tool_used = mapped_column(String(32), default="final_answer")  # 命中路径
     latency_ms = mapped_column(Integer, default=0)  # 端到端耗时
     fallback = mapped_column(Boolean, default=False)  # 是否安全降级
@@ -309,7 +311,7 @@ class ExamStep(Base):
     seq = mapped_column(Integer, default=0)  # 流程顺序
     step_name = mapped_column(String(64), nullable=False)  # 验血 / 彩超 / CT …
     location = mapped_column(String(64), nullable=False, default="")  # A栋3楼 影像科
-    note = mapped_column(Text)  # 医生备注 / 注意事项
+    note = mapped_column(EncryptedText)  # 医生备注 / 注意事项（可能含 PHI）
     status = mapped_column(String(16), default="PENDING")  # PENDING / DONE
     created_by = mapped_column(String(64))  # 开单医生 username
     created_at = mapped_column(DateTime, default=utcnow)
@@ -380,7 +382,7 @@ class EmergencyEvent(PatientBase):
     __tablename__ = "emergency_events"
     id = mapped_column(Integer, primary_key=True)
     patient_id = mapped_column(String(64), index=True)  # 存 username
-    content = mapped_column(Text)
+    content = mapped_column(EncryptedText)  # 紧急事件内容（敏感）
     created_at = mapped_column(DateTime, default=utcnow)
 
 

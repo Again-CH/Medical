@@ -125,7 +125,7 @@
   <div class="lead">体检结论（2026-08-29 修复后复检）</div>
   <p><strong>有数据库，而且是三层架构。</strong>Postgres 主库 25 张表 + 每患者私有 SQLite（PHI 物理隔离）+ pgvector 向量库，Alembic 单一来源管 schema。</p>
   <p><strong>首轮体检发现的 5 个红灯已全部修复</strong>：ruff、漂移检查、全量测试、离线评测、clean clone 一键跑通——五道本地门禁与六道 CI 门禁现在全绿，且可重复执行。</p>
-  <p style="margin-bottom:0"><strong>面试可用性：已达可面试状态。</strong>经历四轮补强（红灯修复 → 可观测性/压测基线 → 韧性工程 → 告警/SLO/Grafana + LLM 成本归因），设计水位已覆盖多 Agent 编排、数据治理、安全合规、可观测性、可靠性与成本可见性；剩余差距集中在部署 IaC、数据合规深化、多租户与前端工程化等"上线前要补"的运维深化项，而非工程能力缺陷。</p>
+  <p style="margin-bottom:0"><strong>面试可用性：已达可面试状态。</strong>经历五轮补强（红灯修复 → 可观测性/压测基线 → 韧性工程 → 告警/SLO/Grafana + LLM 成本归因 → 数据合规深化），设计水位已覆盖多 Agent 编排、数据治理、安全合规、可观测性、可靠性、成本可见性与数据生命周期合规；剩余差距集中在部署 IaC、多租户与前端工程化等"上线前要补"的运维深化项，而非工程能力缺陷。</p>
 </div>
 
 <div class="grid g4" style="margin:16px 0 8px">
@@ -220,7 +220,7 @@
     <tr>
       <td><strong>安全与合规</strong></td>
       <td><span class="pill p-green">9 / 10</span></td><td><span class="pill p-green">8.5 / 10</span></td>
-      <td>RBAC + 对象级授权 OLP（工具无 patient_id 参数）、防爆破锁定、PHI 脱敏、Tier-0 红线、输出侧护栏、PHI 出境策略</td>
+      <td>RBAC + 对象级授权 OLP（工具无 patient_id 参数）、防爆破锁定、PHI 脱敏、Tier-0 红线、输出侧护栏、PHI 出境策略；<strong>第五轮新增 PHI 列级静态加密（EncryptedText 透明加密 9 列，Fernet/AES-GCM 优先、零依赖降级、密钥缺失 fail-closed）+ 留存最小化（超期清理/脱敏）+ 删除权（整体抹除 + 审计假名化）</strong></td>
     </tr>
     <tr>
       <td><strong>可靠性</strong></td>
@@ -321,13 +321,21 @@
   <li><strong>LLM 成本归因（<span class="mono">src/cost.py</span>）</strong>：在 <span class="mono">agents.py</span> 两处 LLM 调用链上埋点，按 <strong>患者 / Agent / 模型</strong> 三维统计 token 与估算费用。真实用量优先取 langchain <span class="mono">usage_metadata</span>，无则按 CJK≈1 token/字、拉丁词≈1.3 token/词估算。Prometheus 仅保留低基数 <span class="mono">(agent, model, kind)</span> 维度（避免每患者一个序列拖垮 TSDB），患者维度走进程内分账 ledger，由 <span class="mono">GET /api/admin/cost</span> 即时聚合。</li>
 </ul>
 
+<h3>已完成 · 第五轮：数据合规深化（PHI 加密 · 留存 · 删除权）</h3>
+<ul>
+  <li><strong>PHI 列级静态加密（<span class="mono">src/phi.py</span>）</strong>：用 SQLAlchemy <span class="mono">TypeDecorator</span>（<span class="mono">EncryptedText</span>）把 9 个 PHI 列（用户手机号/姓名、对话日志输入与输出、审批参数、检查备注、私有库的检验/体征/笔记/提醒/紧急事件）透明加密落盘，业务代码零改动。可插拔后端：装了 <span class="mono">cryptography</span> 走 Fernet（AES-128-GCM+HMAC，生产首选），否则自动降级为标准库 HMAC 构造的认证加密（零依赖也能跑）。密钥缺失即 <strong>fail-closed</strong> 拒绝启动；存量明文行向后兼容、可随时解密；附带 <span class="mono">scripts/encrypt_existing_phi.py</span> 一次性补加密。</li>
+  <li><strong>留存最小化（<span class="mono">src/retention.apply_retention</span>）</strong>：易变对话类 PHI 超期（默认 365 天）即处理——对话日志<strong>脱敏</strong>而非删除（保留运营/合规指标），自由文本笔记与紧急事件<strong>直接删除</strong>；临床记录（检验/体征/预约/检查单）按更长法定留存期（默认约 7 年）保留，不参与自动清理。运维端点 <span class="mono">POST /api/admin/retention?dry_run=1</span>。</li>
+  <li><strong>删除权（<span class="mono">src/retention.erase_patient</span>）</strong>：整体抹除某患者全部可定位数据（删私有库文件 + 主库账号/令牌/预约/检查单/审批/对话/知情同意），并对含标识符的历史审计日志做<strong>盐哈希假名化</strong>（保留可追溯性但不留存明文用户名），最后写入一条删除权执行审计（同样只存假名令牌）。患者自助 <span class="mono">DELETE /api/patient/me</span> 与管理员 <span class="mono">POST /api/admin/erase</span> 共用同一完整路径。对应 GDPR 第 17 条 / 个保法第 47 条。</li>
+  <li><strong>配套</strong>：迁移 <span class="mono">g7b8c9d0e1f2</span>（users.phone/full_name 由定长 VARCHAR 改 TEXT 以容纳密文，<span class="mono">alembic check</span> 零漂移通过）；新增 <span class="mono">tests/test_phi.py</span>（7 项：加解密/篡改检测/明文兼容/fail-closed/ORM 透明性）与 <span class="mono">tests/test_retention.py</span>（5 项：留存清理/脱敏/抹除/审计假名化/端点）；合规文档 <span class="mono">docs/DATA_COMPLIANCE.md</span>。</li>
+</ul>
+
 <h3>P1 · 已全部完成</h3>
-<p style="margin:0 0 14px">上文"第四轮"已交付告警/SLO/Grafana 与 LLM 成本归因两项，原 P1 清单清空。剩余均为 P2 上线深化项（部署 IaC、数据合规深化、多租户、前端工程化）。</p>
+<p style="margin:0 0 14px">上文"第四轮""第五轮"已交付告警/SLO/Grafana、LLM 成本归因与数据合规深化，原 P1 清单清空。剩余均为 P2 上线深化项（部署 IaC、多租户、前端工程化）。</p>
 
 <h3>P2 · 从"能跑"到"能交付运维"</h3>
 <ul>
   <li><strong>部署与 IaC</strong>：Helm chart / Kustomize、多环境配置分离、Secret 走 Vault 或 KMS 而非 .env。</li>
-  <li><strong>数据合规深化</strong>：PHI 列级加密、密钥定期轮换、数据留存与删除 SLA（现在有 <span class="mono">DELETE /api/patient/me</span>，但缺留存策略和备份清理的联动）、备份恢复演练记录。</li>
+  <li><strong>数据合规（基础已落地，见第五轮）</strong>：PHI 列加密 + 留存最小化 + 删除权已实现并测试。剩余可补：密钥定期轮换（轮密 + 旧密解密兼容）、备份恢复演练记录、留存/删除与备份清理的联动。</li>
   <li><strong>多租户与水平扩展</strong>：现在是单院模型，<span class="mono">departments</span> 表没有 tenant 维度。多院区是医疗信息化的刚需。</li>
   <li><strong>前端工程化</strong>：构建流程、组件化、E2E 测试。当前严格 CSP + 事件委托的写法很克制，但对"工程能力"的展示是减分项。</li>
 </ul>
@@ -352,13 +360,14 @@
   </div>
 </div>
 
-<h3>三个必背故事（每个都要能说出文件和数据）</h3>
+<h3>六个必背故事（每个都要能说出文件和数据）</h3>
 <ul>
   <li><strong>HITL 中断恢复</strong>：讲 interrupt 挂在审批门 → 状态写进 Postgres checkpointer → 医护端 <span class="mono">/api/review/resolve</span> 批准 → <span class="mono">Command(resume=...)</span> 恢复 → 服务重启也不丢。配一句"审批单 payload 里带完整 args 和 requester，resolve 时记 resolved_by，审计可追溯"。</li>
   <li><strong>PHI 隔离与越权防护</strong>：讲工具 schema 里<strong>没有 patient_id 参数</strong>，身份只从 JWT 取（对象级授权 OLP），thread_id 派生为 <span class="mono">{role}:{sub}:{client_tid}</span>；再配 <span class="mono">tests/test_security_isolation.py</span> 里 293 行越权 PoC 回归。这是本项目最硬的一块。</li>
   <li><strong>幂等与审批审计</strong>：讲挂号用 <span class="mono">idempotency_keys</span> + 号源 <span class="mono">booked_slots</span> 悲观锁防超卖，配合 <span class="mono">approvals</span> 表与 194 条 audit_logs 形成完整证据链。</li>
     <li><strong>合规驱动的 schema 治理</strong>（本轮新增素材）：三层数据架构（主库 / 每患者私有 SQLite / 向量库）决定了「哪些表该进迁移、哪些不该」。讲你如何让 <span class="mono">alembic check</span> 理解这个边界——私有模型挂在独立 <span class="mono">PatientBase</span> 下、pgvector 迁移按方言跳过、HNSW 索引排除在比对之外。这类"让工具理解架构意图"的活儿，比堆功能更能体现功力。</li>
     <li><strong>韧性工程：重试与熔断的分工</strong>（第三轮新增素材）：讲清楚 <span class="mono">retry.py</span> 解决"瞬时故障自愈"（超时/抖动指数退避），<span class="mono">resilience.py</span> 的熔断器解决"持续故障隔离"——依赖真挂了，再重试只会叠加超时把协程拖死、进而雪崩，所以 OPEN 态要<strong>快速失败</strong>，冷却后放半开探测接回来。再配一句"运维还能用 kill switch 不发版就摘掉故障依赖（如 HIS 宕机停某个工具），降级统一走安全兜底话术，绝不编造"。</li>
+    <li><strong>数据合规闭环（第五轮新增素材）</strong>：讲三层防护——调用层靠对象级授权（OLP）防越权，落盘层靠 <span class="mono">EncryptedText</span> 列级透明加密让 PHI"写即密"（Fernet/AES-GCM 优先、零依赖降级、密钥缺失 fail-closed），生命周期层靠留存策略（超期脱敏/清理）+ 删除权（整体抹除 + 审计假名化）。<strong>这里有个设计判断可以显摆</strong>：加密用应用层 <span class="mono">TypeDecorator</span> 而非改 schema（底层仍是 TEXT，无需迁移，存量明文向后兼容）；患者删除权执行时，历史审计日志用盐哈希把明文用户名替换成不可逆假名令牌——既保留可追溯性又不再留存直接标识符，对应 GDPR 第 17 条 / 个保法第 47 条。</li>
   </ul>
 
 <h3>四个会被追问的坑，提前备好答案</h3>
@@ -434,14 +443,14 @@
   <tbody>
     <tr><td><span class="pill p-blue">P2</span></td><td>多轮交替压测取中位数，修正开销对照实验</td><td>把"低于噪声"变成确定数字</td></tr>
     <tr><td><span class="pill p-blue">P2</span></td><td>部署 IaC（Helm/Kustomize）+ Secret 管理</td><td>从"能跑"到"能交付运维"</td></tr>
-    <tr><td><span class="pill p-blue">P2</span></td><td>数据合规深化（PHI 列加密、留存/删除 SLA、备份演练）</td><td>满足医疗等保/个人信息保护法要求</td></tr>
+    <tr><td><span class="pill p-green">已做</span></td><td>数据合规深化（PHI 列加密 / 留存最小化 / 删除权，见第五轮）</td><td>满足医疗等保/个人信息保护法要求，剩密钥轮换与备份演练</td></tr>
     <tr><td><span class="pill p-blue">P2</span></td><td>多院区多租户（departments 加 tenant 维度）</td><td>医疗信息化刚需</td></tr>
     <tr><td><span class="pill p-blue">P2</span></td><td>前端工程化（构建/组件化/E2E 测试）</td><td>补齐工程化展示短板</td></tr>
   </tbody>
 </table>
 
 <footer>
-  本报告基于 2026-08-29 对 /Users/mac/Documents/Medical-care 的实测：本地 Postgres 实库查询、全量 pytest（sqlite 与 Postgres 双路径、各连跑两次）、ruff check / format、alembic 双方言漂移检查、离线评测、CI 配置审阅、clean clone 验证、locust 压测（正常负载 / 极限吞吐 / 开启追踪对照三轮）与热点剖析、第三轮韧性工程（熔断器 / 运行时 kill switch / LLM·工具降级编排，15 项新增测试）、第四轮告警/SLO/Grafana 栈与 LLM 成本归因（src/cost.py + 7 项新增测试）。所有数字均为实测值，非估算。
+  本报告基于 2026-08-29 对 /Users/mac/Documents/Medical-care 的实测：本地 Postgres 实库查询、全量 pytest（sqlite 与 Postgres 双路径、各连跑两次）、ruff check / format、alembic 双方言漂移检查、离线评测、CI 配置审阅、clean clone 验证、locust 压测（正常负载 / 极限吞吐 / 开启追踪对照三轮）与热点剖析、第三轮韧性工程（熔断器 / 运行时 kill switch / LLM·工具降级编排，15 项新增测试）、第四轮告警/SLO/Grafana 栈与 LLM 成本归因（src/cost.py + 7 项新增测试）、第五轮数据合规深化（应用层透明列加密 EncryptedText 双后端、留存最小化 apply_retention、删除权 erase_patient，新增 src/phi.py / src/retention.py / 迁移 g7b8c9d0e1f2 / 运维脚本 / 合规文档 + 12 项新增测试，本地 Postgres 实库 alembic upgrade head 零漂移）。所有数字均为实测值，非估算。
 </footer>
 
 </div>

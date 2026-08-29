@@ -200,3 +200,17 @@ def set_pending_approvals(count: Optional[int]) -> None:
     """刷新待审批积压（Gauge 需要主动写入，不能靠累加）。"""
     if count is not None:
         APPROVALS_PENDING.set(count)
+
+
+# ---------- 数据合规：留存清理与删除权 ----------
+PHI_PURGED = Counter(
+    "phi_purged_total",
+    "留存策略清理的 PHI 记录数（对话类易变 PHI 超期抹除）",
+    ["scope"],
+    namespace=NAMESPACE,
+)
+PHI_ERASURES = Counter(
+    "phi_erasures_total",
+    "患者删除权（right-to-erasure）执行次数（整体抹除患者数据）",
+    namespace=NAMESPACE,
+)

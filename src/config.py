@@ -162,6 +162,28 @@ LLM_PRIVATE_HOSTS = [
 ]
 
 
+# ---- PHI 静态加密（应用层透明列加密，src/phi.py） ----
+# PHI_ENCRYPTION_ENABLED：是否对「新写入」的 PHI 列加密落盘。默认关闭（保持改造前行为），
+#   生产必须置 1 并提供 PHI_ENCRYPTION_KEY。存量明文行向后兼容、可随时解密。
+# PHI_ENCRYPTION_KEY：主密钥（任意长度秘密串，统一派生 32 字节）。缺失且启用即 fail-closed 拒绝启动。
+#   生成：python -c "from src.phi import generate_secret; print(generate_secret())"
+PHI_ENCRYPTION_ENABLED = os.getenv("PHI_ENCRYPTION_ENABLED", "0").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+PHI_ENCRYPTION_KEY = os.getenv("PHI_ENCRYPTION_KEY", "")
+
+
+# ---- PHI 留存与删除权（src/retention.py） ----
+# PHI_RETENTION_DAYS：易变对话类 PHI（自由文本笔记 / 对话日志 / 紧急事件）的留存上限，超期清理。
+#   临床记录（检验报告 / 生命体征 / 预约 / 检查单）默认长期留存（医疗记录法定留存期更长），
+#   不参与自动清理，仅随「删除权」整体抹除。
+PHI_RETENTION_DAYS = int(os.getenv("PHI_RETENTION_DAYS", "365"))
+# 临床记录留存天数（仅用于文档化与未来策略，默认不清理）
+PHI_CLINICAL_RETENTION_DAYS = int(os.getenv("PHI_CLINICAL_RETENTION_DAYS", "2555"))  # 约 7 年
+
+
 def _resolve_jwt_secret() -> str:
     """解析并校验 JWT 密钥。
 
