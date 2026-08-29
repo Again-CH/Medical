@@ -7,6 +7,8 @@
 
 默认 `LLM_MODE=fake`，**无需任何 API key 即可端到端跑通**；可一键切换到 `ollama` / `openai` / `qwen`。
 
+> **完整项目总览见 [`docs/PROJECT_OVERVIEW.md`](docs/PROJECT_OVERVIEW.md)** —— 架构、数据模型、安全合规、可观测性、质量度量、交付运维、关键设计决策与面试话术索引，一份文档讲全。
+
 ## 本地一键验证（等价于 CI）
 
 ```bash
@@ -15,7 +17,7 @@ pip install -r requirements.txt
 
 ruff check .                       # 静态检查
 ruff format --check .              # 格式门禁
-pytest -q                          # 80 项测试，默认临时 sqlite，无需外部服务
+pytest -q                          # 187 项测试，默认临时 sqlite，无需外部服务
 python scripts/check_migrations.py # ORM 模型与迁移一致性（防漂移）
 python scripts/eval_offline.py     # 红线 + 意图离线评测
 ```
