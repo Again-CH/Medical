@@ -165,6 +165,7 @@ def seed_all() -> None:
                     full_name=full_name,
                     title=title,
                     dept_id=dept_id[code],
+                    tenant_id=default_tid,
                 )
                 s.add(d)
                 s.flush()
@@ -190,6 +191,7 @@ def seed_all() -> None:
                             period=period,
                             total_slots=20,
                             booked_slots=0,
+                            tenant_id=default_tid,
                         )
                     )
 
@@ -292,6 +294,7 @@ def seed_all() -> None:
                         note=note,
                         status=status,
                         created_by="drwang",
+                        tenant_id=default_tid,
                     )
                 )
         s.commit()

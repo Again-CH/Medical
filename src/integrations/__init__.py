@@ -329,8 +329,12 @@ class DbHub:
             if not dept:
                 return f"[availability] 未找到科室「{department}」"
             remaining = 0
-            for doc in s.query(Doctor).filter(Doctor.dept_id == dept.id):
-                for sch in s.query(DoctorSchedule).filter_by(doctor_id=doc.id, work_date=date):
+            # 显式按 tenant_id 过滤医生与排班：科室已按租户隔离，此处再显式过滤
+            # 构成第二道防线，即使未来有人绕过科室 JOIN 也不会跨院区读号源。
+            for doc in s.query(Doctor).filter(Doctor.dept_id == dept.id, Doctor.tenant_id == tid):
+                for sch in s.query(DoctorSchedule).filter_by(
+                    doctor_id=doc.id, work_date=date, tenant_id=tid
+                ):
                     remaining += max(0, sch.total_slots - sch.booked_slots)
             return f"[availability] {department} {date} 剩余号源：{remaining}"
 
@@ -370,7 +374,9 @@ class DbHub:
                 .join(Doctor)
                 .filter(
                     Doctor.dept_id == dept.id,
+                    Doctor.tenant_id == tid,
                     DoctorSchedule.work_date == date,
+                    DoctorSchedule.tenant_id == tid,
                     DoctorSchedule.booked_slots < DoctorSchedule.total_slots,
                 )
                 .all()
@@ -406,6 +412,7 @@ class DbHub:
                 period=sched.period,
                 slot_index=sched.booked_slots,
                 status="LOCKED",
+                tenant_id=tid,
             )
             s.add(appt)
             s.commit()

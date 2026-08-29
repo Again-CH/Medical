@@ -131,8 +131,8 @@
 <div class="grid g4" style="margin:16px 0 8px">
   <div class="card" style="border-color:#bcdcc8">
     <div class="k">全量测试</div>
-    <div class="v" style="color:var(--green)">119 / 119</div>
-    <div class="n">sqlite 与 Postgres 双路径，含 5 项多租户 + 3 项 E2E</div>
+    <div class="v" style="color:var(--green)">124 / 124</div>
+    <div class="n">sqlite 与 Postgres 双路径，含 10 项多租户 + 3 项 E2E</div>
   </div>
   <div class="card" style="border-color:#bcdcc8">
     <div class="k">ruff check / format</div>
@@ -249,8 +249,8 @@
     </tr>
     <tr>
       <td><strong>多租户隔离</strong></td>
-      <td><span class="pill p-green">8 / 10</span></td><td><span class="pill p-green">8 / 10</span></td>
-      <td><strong>第六轮新增</strong>：<span class="mono">tenants</span> 表 + <span class="mono">departments</span>/<span class="mono">symptom_dept_map</span> 的 <span class="mono">tenant_id</span> 维度；contextvars 跨 LangGraph 任务边界传播；租户标识只来自受控请求头，工具 schema 无 <span class="mono">tenant_id</span> 入参（与 OLP 同哲学）；5 项隔离测试转绿</td>
+      <td><span class="pill p-green">9 / 10</span></td><td><span class="pill p-green">9 / 10</span></td>
+      <td><strong>第六轮新增</strong>：<span class="mono">tenants</span> 表；<span class="mono">tenant_id</span> 覆盖<strong>科室主数据</strong>（<span class="mono">departments</span>/<span class="mono">symptom_dept_map</span>，迁移 <span class="mono">0b8ce330fa1c</span>）与<strong>业务主数据</strong>（<span class="mono">doctors</span>/<span class="mono">doctor_schedules</span>/<span class="mono">appointments</span>/<span class="mono">exam_steps</span>，迁移 <span class="mono">262ab07cc03b</span>，按既有关系派生回填）；contextvars 跨 LangGraph 任务边界传播；租户标识只来自受控请求头，工具 schema 无 <span class="mono">tenant_id</span> 入参（与 OLP 同哲学）；<strong>10 项隔离测试转绿</strong>。<code>users</code> 刻意不加租户维度（患者可跨院区就诊，身份全局共享），已由测试固化该决策</td>
     </tr>
     <tr>
       <td><strong>部署与运维</strong></td>
@@ -348,7 +348,7 @@
 <ul>
   <li><strong>部署与 IaC（第六轮已做）</strong>：Helm chart + Secret 管理脚手架 + Makefile 目标 + 部署文档。</li>
   <li><strong>数据合规（基础已落地，见第五轮）</strong>：PHI 列加密 + 留存最小化 + 删除权已实现并测试。剩余可补：密钥定期轮换（轮密 + 旧密解密兼容）、备份恢复演练记录、留存/删除与备份清理的联动。</li>
-  <li><strong>多租户与水平扩展（第六轮已做）</strong>：<span class="mono">departments</span> 加 <span class="mono">tenant_id</span> 维度，contextvars 传播 + 受控请求头解析。</li>
+  <li><strong>多租户与水平扩展（第六轮已做）</strong>：<span class="mono">tenant_id</span> 覆盖科室主数据（<span class="mono">departments</span>/<span class="mono">symptom_dept_map</span>）与业务主数据（<span class="mono">doctors</span>/<span class="mono">doctor_schedules</span>/<span class="mono">appointments</span>/<span class="mono">exam_steps</span>），迁移按既有关系派生回填；contextvars 传播 + 受控请求头解析；<span class="mono">users</span> 刻意保持全局（患者可跨院区就诊）并由测试固化。</li>
   <li><strong>前端工程化（第六轮已做）</strong>：Vite 构建 / 共享模块组件化 / Playwright E2E。</li>
 </ul>
 
@@ -372,7 +372,7 @@
   </div>
 </div>
 
-<h3>九个必背故事（每个都要能说出文件和数据）</h3>
+<h3>十个必背故事（每个都要能说出文件和数据）</h3>
 <ul>
   <li><strong>HITL 中断恢复</strong>：讲 interrupt 挂在审批门 → 状态写进 Postgres checkpointer → 医护端 <span class="mono">/api/review/resolve</span> 批准 → <span class="mono">Command(resume=...)</span> 恢复 → 服务重启也不丢。配一句"审批单 payload 里带完整 args 和 requester，resolve 时记 resolved_by，审计可追溯"。</li>
   <li><strong>PHI 隔离与越权防护</strong>：讲工具 schema 里<strong>没有 patient_id 参数</strong>，身份只从 JWT 取（对象级授权 OLP），thread_id 派生为 <span class="mono">{role}:{sub}:{client_tid}</span>；再配 <span class="mono">tests/test_security_isolation.py</span> 里 293 行越权 PoC 回归。这是本项目最硬的一块。</li>
@@ -383,6 +383,7 @@
     <li><strong>多租户的 contextvars 传播（第六轮新增素材）</strong>：讲为什么不用「每请求传参」——LangGraph 的 <span class="mono">ToolNode</span> 在独立异步任务里跑工具，工具拿不到请求入参。所以在 FastAPI 依赖里把租户写进 <span class="mono">contextvars</span>（<span class="mono">tenant_ctx</span>），工具内部 <span class="mono">resolve_tenant_id()</span> 无感读取，工具签名零改动，FakeLLM/评测路径也不受影响；agent 节点还会从 graph state 的 <span class="mono">tenant_id</span> 重新 set 以跨任务边界存活。配一句"<strong>租户标识只来自受控请求头，工具 schema 没有 tenant_id 入参</strong>，prompt injection 跨不了租户"——和 OLP 是同一套哲学。</li>
     <li><strong>IaC 的 fail-closed（第六轮新增素材）</strong>：讲 Helm 的 Secret/ConfigMap 分离与「缺失即失败」——<span class="mono">envFrom.secretRef</span> 没配 Secrets 时 Pod 直接起不来，等价于 compose 的 <span class="mono">${VAR:?}</span> 校验，杜绝「镜像里藏着弱默认密码悄悄上线」。再说安全上下文：非 root（uid 10001）、<span class="mono">readOnlyRootFilesystem</span>、<span class="mono">drop ALL</span>、可写目录只留 <span class="mono">/app/data</span> 的 emptyDir。这类「默认就安全、配错就起不来」的约束，比文档里的口号更有说服力。</li>
     <li><strong>前端工程化：克制也是一种设计（第六轮新增素材）</strong>：讲清楚为什么 Vite + 原生 ES 模块而不引 React/Vue——前端只是 Agent 的演示入口与病历可视化，引框架只会加体积与攻击面；用 Vite 满足「构建/组件化/E2E」三件事后，共享模块（api/dom/state/constants/csp-events）消除重复，网关同源托管 <span class="mono">dist/</span> + <span class="mono">/assets</span> 且保留严格 CSP（模块脚本由 <span class="mono">'self'</span> 放行，仅内联脚本需 nonce），Playwright E2E 把「患者/医护页面加载 + 登录」钉成 3 项冒烟。能说出"<strong>严格 CSP 下如何既用构建工具又不破坏安全模型</strong>"，比堆框架更显功力。</li>
+    <li><strong>自动化门禁查不出的合规漏洞（第六轮最强素材）</strong>：讲你如何发现「主库里混进了 5 张患者私有表且存着真实 PHI」。起因是 Postgres 全量回归里「删除权」用例报外键冲突（<span class="mono">conversation_memory_patient_id_fkey</span>），追下去发现<strong>初始迁移建表时私有模型还挂在共享 Base 下</strong>，于是被建进了共享主库；后来架构演进为「每患者独立 SQLite」，历史表却从未清理。<strong>这里有三层可以显摆</strong>：① <span class="mono">alembic check</span> 只比「ORM 模型 vs 迁移」，永远发现不了「库里多了不该有的表」——<strong>不变量需要专门的检查来守，不是上工具就自动有了</strong>；② 修法分两步且顺序不能颠倒——先跑 <span class="mono">scripts/migrate_phi_to_private_dbs.py</span> 幂等搬运（实测中 <span class="mono">alice.db</span> 根本不存在，她的 PHI 只在主库有，不抢救就删表等于删库），再由迁移 <span class="mono">9c4f2e8a71d3</span> 删表；③ 加测试时不依赖种子数据——<strong>自建专用患者</strong>，因为全新库上 TestClient 不触发 lifespan 播种，依赖 <span class="mono">alice</span> 会让用例 skip，而<strong>跳过的断言等于没测</strong>。这个故事把「会追根因、懂合规、尊重数据」三件事一次讲完。</li>
   </ul>
 
 <h3>四个会被追问的坑，提前备好答案</h3>
@@ -459,7 +460,7 @@
     <tr><td><span class="pill p-blue">P2</span></td><td>多轮交替压测取中位数，修正开销对照实验</td><td>把"低于噪声"变成确定数字</td></tr>
     <tr><td><span class="pill p-green">已做</span></td><td>部署 IaC（Helm chart + Secret 管理脚手架，见第六轮）</td><td>从"能跑"到"能交付运维"</td></tr>
     <tr><td><span class="pill p-green">已做</span></td><td>数据合规深化（PHI 列加密 / 留存最小化 / 删除权，见第五轮）</td><td>满足医疗等保/个人信息保护法要求，剩密钥轮换与备份演练</td></tr>
-    <tr><td><span class="pill p-green">已做</span></td><td>多院区多租户（departments 加 tenant 维度，见第六轮）</td><td>医疗信息化刚需，5 项隔离测试转绿</td></tr>
+    <tr><td><span class="pill p-green">已做</span></td><td>多院区多租户（科室 + 业务主数据全表 tenant_id，见第六轮）</td><td>医疗信息化刚需，10 项隔离测试转绿</td></tr>
     <tr><td><span class="pill p-green">已做</span></td><td>前端工程化（Vite 构建/组件化/E2E，见第六轮）</td><td>补齐工程化展示短板，3 项 E2E 转绿</td></tr>
   </tbody>
 </table>
@@ -468,8 +469,10 @@
 <table>
   <thead><tr><th style="width:8%">项</th><th>动作</th><th style="width:34%">验收结果</th></tr></thead>
   <tbody>
-    <tr><td><span class="pill p-green">T1</span></td><td>多租户：<span class="mono">tenants</span> 表 + <span class="mono">departments</span>/<span class="mono">symptom_dept_map</span> 加 <span class="mono">tenant_id</span> + 迁移 <span class="mono">0b8ce330fa1c</span>（双方言）</td><td>默认租户（id=1）向后兼容；<span class="mono">tests/test_tenant.py</span> 5 项全绿（含跨租户不可见）</td></tr>
+    <tr><td><span class="pill p-green">T1</span></td><td>多租户（科室主数据）：<span class="mono">tenants</span> 表 + <span class="mono">departments</span>/<span class="mono">symptom_dept_map</span> 加 <span class="mono">tenant_id</span> + 迁移 <span class="mono">0b8ce330fa1c</span>（双方言）</td><td>默认租户（id=1）向后兼容；跨租户科室互不可见</td></tr>
     <tr><td><span class="pill p-green">T2</span></td><td>contextvars 传播：FastAPI 依赖写 <span class="mono">tenant_ctx</span>，agent 节点从 state 重设；<span class="mono">X-Tenant-Id</span> 头 + 管理端点</td><td>租户解析优先级正确；工具 schema 无 <span class="mono">tenant_id</span> 入参</td></tr>
+    <tr><td><span class="pill p-green">T6</span></td><td><strong>多租户扩展到业务主数据</strong>：<span class="mono">doctors</span>/<span class="mono">doctor_schedules</span>/<span class="mono">appointments</span>/<span class="mono">exam_steps</span> 加 <span class="mono">tenant_id</span> + 迁移 <span class="mono">262ab07cc03b</span>（按既有关系<strong>派生回填</strong>）</td><td>3 位医生租户与其科室<strong>完全一致（0 处不一致）</strong>；18 排班 / 7 检查单正确派生；医生-排班-号源-检查单跨院区全隔离；<span class="mono">users</span> 保持全局并由测试固化</td></tr>
+    <tr><td><span class="pill p-green">T7</span></td><td><strong>修复 PHI 隔离漏洞</strong>：主库混入 5 张患者私有表（初始迁移遗留）且含真实 PHI → <span class="mono">scripts/migrate_phi_to_private_dbs.py</span> 抢救数据 + 迁移 <span class="mono">9c4f2e8a71d3</span> 删表</td><td>alice 的 PHI（原只存主库）抢救进 <span class="mono">data/alice.db</span>；主库 26→21 表；「删除权」在 Postgres 上的外键阻塞解除；零漂移</td></tr>
     <tr><td><span class="pill p-green">T3</span></td><td>IaC：Helm chart（ConfigMap/Secret 分离、安全上下文、可选 Postgres）+ Secret 脚手架 + Makefile 目标 + <span class="mono">docs/DEPLOY_IAC.md</span></td><td><strong>真实 helm CLI 验证</strong>：<span class="mono">helm lint</span> 0 failed；<span class="mono">helm template</span> 默认模式渲染 3 资源（ConfigMap/Deployment/Service）、开 Postgres 渲染 6 资源（+PVC/Secret/Svc）；fail-closed 实测生效（启 Postgres 不给密码 → <span class="mono">required</span> 报错拒绝渲染）。<strong>并修掉一个真实 bug</strong>：原把 <span class="mono">readOnlyRootFilesystem</span>/<span class="mono">allowPrivilegeEscalation</span>/<span class="mono">capabilities</span> 写在 Pod 级 securityContext，而这三者在 K8s API 中<strong>只属容器级</strong>，真集群会 unknown field 拒绝部署——已拆分为 <span class="mono">securityContext</span>（Pod 级：runAsUser/runAsNonRoot）+ <span class="mono">containerSecurityContext</span>（容器级）</td></tr>
     <tr><td><span class="pill p-green">T4</span></td><td>前端：Vite 双入口构建 + <span class="mono">src/shared/</span> 抽取 + 网关同源托管 dist/<span class="mono">assets</span>（保留 CSP）</td><td><span class="mono">npm run build</span> 产出 <span class="mono">dist/</span>；<span class="mono">/assets/chat-*.js</span> 返回 200 + <span class="mono">text/javascript</span></td></tr>
     <tr><td><span class="pill p-green">T5</span></td><td>E2E：Playwright 配置 + 冒烟（alice/drwang 登录、双页加载）</td><td><span class="mono">npx playwright test</span> 3 / 3 通过（1.4s）</td></tr>
@@ -477,7 +480,7 @@
 </table>
 
 <footer>
-  本报告基于 2026-08-30 对 /Users/mac/Documents/Medical-care 的实测：本地 Postgres 实库查询、全量 pytest（sqlite 与 Postgres 双路径、各连跑两次，119/119 全绿）、ruff check / format、alembic 双方言漂移检查、离线评测、CI 配置审阅、clean clone 验证、locust 压测（正常负载 / 极限吞吐 / 开启追踪对照三轮）与热点剖析、第三轮韧性工程（熔断器 / 运行时 kill switch / LLM·工具降级编排，15 项新增测试）、第四轮告警/SLO/Grafana 栈与 LLM 成本归因（src/cost.py + 7 项新增测试）、第五轮数据合规深化（应用层透明列加密 EncryptedText 双后端、留存最小化 apply_retention、删除权 erase_patient，新增 src/phi.py / src/retention.py / 迁移 g7b8c9d0e1f2 / 运维脚本 / 合规文档 + 12 项新增测试，本地 Postgres 实库 alembic upgrade head 零漂移）、<strong>第六轮多租户 + IaC + 前端工程化</strong>（新增 tenants 表与 tenant_id 维度 + 迁移 0b8ce330fa1c 双方言、contextvars 跨 LangGraph 任务边界传播、5 项租户隔离测试全绿；Helm chart 含 ConfigMap/Secret 分离、非 root 安全上下文、fail-closed envFrom、可选内嵌 Postgres 与 Makefile 目标 + docs/DEPLOY_IAC.md；Vite 双入口构建 + src/shared 组件化 + 网关同源托管 dist/assets 保留严格 CSP + Playwright E2E 3/3 通过）。所有数字均为实测值，非估算。
+  本报告基于 2026-08-30 对 /Users/mac/Documents/Medical-care 的实测：本地 Postgres 实库查询、全量 pytest（sqlite 与 Postgres 双路径，<strong>124/124 全绿</strong>）、ruff check / format、alembic 双方言漂移检查、离线评测、CI 配置审阅、clean clone 验证、locust 压测（正常负载 / 极限吞吐 / 开启追踪对照三轮）与热点剖析、第三轮韧性工程（熔断器 / 运行时 kill switch / LLM·工具降级编排，15 项新增测试）、第四轮告警/SLO/Grafana 栈与 LLM 成本归因（src/cost.py + 7 项新增测试）、第五轮数据合规深化（应用层透明列加密 EncryptedText 双后端、留存最小化 apply_retention、删除权 erase_patient，新增 src/phi.py / src/retention.py / 迁移 g7b8c9d0e1f2 / 运维脚本 / 合规文档 + 12 项新增测试）、<strong>第六轮多租户 + IaC + 前端工程化 + PHI 隔离修复</strong>（tenants 表与 tenant_id 覆盖科室主数据 0b8ce330fa1c 与业务主数据 262ab07cc03b、后者按既有关系派生回填且医生租户与科室 100% 一致、10 项租户隔离测试全绿、users 保持全局并由测试固化；Helm chart 经<strong>真实 helm v3.16.3 CLI</strong> 验证 lint 0 failed / template 双模式渲染 / fail-closed 实测，并修掉 securityContext 层级错误；Vite 双入口构建 + src/shared 组件化 + 网关同源托管 dist/assets 保留严格 CSP + Playwright E2E 3/3；<strong>修复 PHI 隔离漏洞</strong>——主库混入 5 张患者私有表且含真实 PHI，先经 scripts/migrate_phi_to_private_dbs.py 幂等抢救（alice 数据原只存主库）再由迁移 9c4f2e8a71d3 删表，主库 26→21 表，解除「删除权」在 Postgres 上的外键阻塞）。所有数字均为实测值，非估算。
 </footer>
 
 </div>

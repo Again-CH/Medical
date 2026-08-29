@@ -82,14 +82,23 @@ class Doctor(Base):
     failed_attempts = mapped_column(Integer, default=0, nullable=False)
     locked_until = mapped_column(DateTime, nullable=True)
     dept_id = mapped_column(Integer, ForeignKey("departments.id"))
+    # 医生归属院区：与其所在科室的租户一致（迁移中由 dept_id 派生回填）
+    tenant_id = mapped_column(Integer, ForeignKey("tenants.id"), nullable=False)
 
 
 class Tenant(Base):
-    """多院区 / 租户注册表。departments 与 symptom_dept_map 均按 tenant_id 隔离。
+    """多院区 / 租户注册表（见 docs/MULTI_TENANT.md）。
 
-    设计取舍（见 docs/MULTI_TENANT.md）：本期把租户维度落在「科室主数据」这一层
-    （即用户明确要求 ``departments 加 tenant 维度``），并通过 X-Tenant-Id 头 / 上下文
-    变量做租户解析。appointments / doctors 等其余表暂不挂 tenant_id，扩展路径同此模式。
+    租户维度覆盖范围（两阶段）：
+    - 第一阶段（科室主数据）：``departments`` / ``symptom_dept_map``；
+    - 第二阶段（业务主数据，本轮扩展）：``doctors`` / ``doctor_schedules``
+      / ``appointments`` / ``exam_steps`` —— 让任何一张表都能直接按
+      ``tenant_id`` 过滤，而不必层层 JOIN 推导归属。
+
+    **``users`` 刻意不加 tenant_id**：患者可跨院区就诊，身份应当是集团内全局共享的
+    （同一账号在 A 院区和 B 院区都能挂号），若按租户切分会导致跨院区重复建档、
+    病历碎片化。预约归属哪個院区由 ``Appointment.tenant_id`` 表达，而非账号本身。
+    这是建模判断，不是遗漏。
     """
 
     __tablename__ = "tenants"
@@ -126,6 +135,7 @@ class DoctorSchedule(Base):
     period = mapped_column(String(8), nullable=False)  # AM / PM
     total_slots = mapped_column(Integer, default=20)
     booked_slots = mapped_column(Integer, default=0)
+    tenant_id = mapped_column(Integer, ForeignKey("tenants.id"), nullable=False)
     __table_args__ = (
         UniqueConstraint("doctor_id", "work_date", "period", name="uq_doc_date_period"),
     )
@@ -143,6 +153,8 @@ class Appointment(Base):
     status = mapped_column(String(16), default="LOCKED")
     medicare_settled = mapped_column(Boolean, default=False)
     created_at = mapped_column(DateTime, default=utcnow)
+    # 归属院区：本次挂号发生在哪个院区（患者账号本身是集团全局的，故此处显式记录）
+    tenant_id = mapped_column(Integer, ForeignKey("tenants.id"), nullable=False)
 
 
 class Approval(Base):
@@ -334,6 +346,7 @@ class ExamStep(Base):
     created_by = mapped_column(String(64))  # 开单医生 username
     created_at = mapped_column(DateTime, default=utcnow)
     done_at = mapped_column(DateTime)
+    tenant_id = mapped_column(Integer, ForeignKey("tenants.id"), nullable=False)
 
 
 # 检查项目 → 院区楼宇位置（用于流程报表自动标注「去哪栋楼几楼」）

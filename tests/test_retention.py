@@ -20,6 +20,7 @@ from src.db import (
     get_patient_session,
     get_session,
 )
+from src.tenant import default_tenant_id
 
 
 def _utc(days_ago: int) -> datetime:
@@ -135,6 +136,8 @@ def test_erase_removes_everything_and_scrubs_audit(tmp_path, monkeypatch):
         )
         s.commit()
     user_id = s.query(User).filter(User.username == username).first().id
+    # 业务主数据已按院区隔离：预约与检查单必须带 tenant_id（此处用默认租户）
+    _tid = default_tenant_id()
     with get_session() as s:
         s.add(
             Appointment(
@@ -144,9 +147,17 @@ def test_erase_removes_everything_and_scrubs_audit(tmp_path, monkeypatch):
                 work_date="2026-01-01",
                 period="AM",
                 slot_index=1,
+                tenant_id=_tid,
             )
         )
-        s.add(ExamStep(patient_username=username, step_name="验血", location="B栋"))
+        s.add(
+            ExamStep(
+                patient_username=username,
+                step_name="验血",
+                location="B栋",
+                tenant_id=_tid,
+            )
+        )
         s.add(RefreshToken(username=username, role="patient", token_hash="h", expires_at=_utc(-1)))
         s.add(ConsentRecord(username=username, consent_version="v1"))
         s.add(

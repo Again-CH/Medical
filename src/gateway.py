@@ -1681,19 +1681,32 @@ async def list_schedules(
 
 
 @app.put("/api/admin/schedules")
-async def update_schedules(req: Request, user: dict = Depends(require_doctor)):
-    """批量更新排班名额。body: { updates: [{id, total_slots}] }"""
+async def update_schedules(
+    req: Request,
+    user: dict = Depends(require_doctor),
+    tenant: Optional[int] = None,
+    _ctx=Depends(require_tenant_context),
+):
+    """批量更新排班名额。body: { updates: [{id, total_slots}] }
+
+    按租户过滤：A 院区管理员只能改本区排班，传入他院区的排班 id 视为不存在。
+    """
     body = await req.json()
     updates = body.get("updates", [])
     if not isinstance(updates, list) or len(updates) == 0:
         raise HTTPException(status_code=400, detail="updates 不能为空")
+    tid = resolve_tenant_id(tenant)
     with get_session() as s:
         for u in updates:
             sid = u.get("id")
             total = u.get("total_slots")
             if sid is None or total is None:
                 continue
-            sch = s.query(DoctorSchedule).filter(DoctorSchedule.id == sid).first()
+            sch = (
+                s.query(DoctorSchedule)
+                .filter(DoctorSchedule.id == sid, DoctorSchedule.tenant_id == tid)
+                .first()
+            )
             if sch:
                 # 不允许设为低于已预约数
                 new_total = max(int(total), sch.booked_slots)
@@ -1839,10 +1852,16 @@ async def exam_types(user: dict = Depends(get_current_user)):
 
 
 @app.post("/api/doctor/exam-orders")
-async def create_exam_orders(req: Request, user: dict = Depends(require_doctor)):
+async def create_exam_orders(
+    req: Request,
+    user: dict = Depends(require_doctor),
+    tenant: Optional[int] = None,
+    _ctx=Depends(require_tenant_context),
+):
     """医生为患者开具检查流程单。body: {patient_username, appointment_id?, steps:[{name,location?,note?}]}。
 
     每一步自动补全院区楼宇位置（如 验血→B栋2楼 检验科），生成「体检详细流程报表」。
+    检查单归属开单医生所在的院区（tenant_id）。
     """
     body = await req.json()
     patient = (body.get("patient_username") or "").strip()
@@ -1851,6 +1870,7 @@ async def create_exam_orders(req: Request, user: dict = Depends(require_doctor))
         raise HTTPException(status_code=400, detail="patient_username 必填")
     if not isinstance(steps, list) or not steps:
         raise HTTPException(status_code=400, detail="steps 不能为空")
+    tid = resolve_tenant_id(tenant)
     with get_session() as s:
         u = s.query(User).filter(User.username == patient).first()
         if not u:
@@ -1871,6 +1891,7 @@ async def create_exam_orders(req: Request, user: dict = Depends(require_doctor))
                 note=note,
                 status="PENDING",
                 created_by=user["sub"],
+                tenant_id=tid,
             )
             s.add(row)
             s.flush()
@@ -1889,14 +1910,20 @@ async def create_exam_orders(req: Request, user: dict = Depends(require_doctor))
 
 
 @app.get("/api/doctor/exam-orders")
-async def list_exam_orders(patient: str = "", user: dict = Depends(require_doctor)):
-    """医生查看某患者的检查流程（按流程顺序返回）。"""
+async def list_exam_orders(
+    patient: str = "",
+    user: dict = Depends(require_doctor),
+    tenant: Optional[int] = None,
+    _ctx=Depends(require_tenant_context),
+):
+    """医生查看某患者的检查流程（按流程顺序返回），限本院区开具的单。"""
     if not patient:
         raise HTTPException(status_code=400, detail="patient 必填")
+    tid = resolve_tenant_id(tenant)
     with get_session() as s:
         rows = (
             s.query(ExamStep)
-            .filter(ExamStep.patient_username == patient)
+            .filter(ExamStep.patient_username == patient, ExamStep.tenant_id == tid)
             .order_by(ExamStep.seq, ExamStep.id)
             .all()
         )
@@ -1920,14 +1947,24 @@ async def list_exam_orders(patient: str = "", user: dict = Depends(require_docto
 
 
 @app.put("/api/doctor/exam-steps/{step_id}")
-async def update_exam_step(step_id: int, req: Request, user: dict = Depends(require_doctor)):
-    """医生标记某检查步骤完成 / 撤销完成。body: {status: 'PENDING'|'DONE'}。"""
+async def update_exam_step(
+    step_id: int,
+    req: Request,
+    user: dict = Depends(require_doctor),
+    tenant: Optional[int] = None,
+    _ctx=Depends(require_tenant_context),
+):
+    """医生标记某检查步骤完成 / 撤销完成。body: {status: 'PENDING'|'DONE'}。
+
+    按租户过滤：他院区的检查单 id 视为不存在，杜绝跨院区改单。
+    """
     body = await req.json()
     status = (body.get("status") or "PENDING").upper()
     if status not in ("PENDING", "DONE"):
         raise HTTPException(status_code=400, detail="status 仅支持 PENDING/DONE")
+    tid = resolve_tenant_id(tenant)
     with get_session() as s:
-        r = s.query(ExamStep).filter(ExamStep.id == step_id).first()
+        r = s.query(ExamStep).filter(ExamStep.id == step_id, ExamStep.tenant_id == tid).first()
         if not r:
             raise HTTPException(status_code=404, detail="step not found")
         r.status = status
