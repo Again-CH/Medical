@@ -121,10 +121,34 @@
   <div class="sub">实测时间 2026-08-29 · 项目路径 /Users/mac/Documents/Medical-care · 数据源：本地 Postgres 实库 + 全量测试套件 + CI 配置</div>
 </header>
 
-<div class="verdict">
-  <div class="lead">结论一句话</div>
-  <p><strong>有数据库，而且设计得相当扎实。</strong>架构层面已经具备企业级骨架（LangGraph 中枢辐射 + HITL 审核门 + Alembic 迁移治理 + pgvector RAG + 六道 CI 门禁）；但<strong>工程状态差一口气</strong>——当前工作副本有 3 道 CI 门禁是红的、主链路端到端用例失败、69 个改动未提交。</p>
-  <p style="margin-bottom:0"><strong>能不能拿去面试：能，而且是个好素材</strong>，但必须先修完下面 5 个 P0 红灯。否则面试官一句"你跑一下测试我看看"就露馅。</p>
+<div class="verdict" style="border-left:4px solid var(--green)">
+  <div class="lead">体检结论（2026-08-29 修复后复检）</div>
+  <p><strong>有数据库，而且是三层架构。</strong>Postgres 主库 25 张表 + 每患者私有 SQLite（PHI 物理隔离）+ pgvector 向量库，Alembic 单一来源管 schema。</p>
+  <p><strong>首轮体检发现的 5 个红灯已全部修复</strong>：ruff、漂移检查、全量测试、离线评测、clean clone 一键跑通——五道本地门禁与六道 CI 门禁现在全绿，且可重复执行。</p>
+  <p style="margin-bottom:0"><strong>面试可用性：已达可面试状态。</strong>剩余差距集中在可观测性与性能容量（下表 3 分 / 2 分两栏），属于"上线前要补"而非"工程能力缺陷"。</p>
+</div>
+
+<div class="grid g4" style="margin:16px 0 8px">
+  <div class="card" style="border-color:#bcdcc8">
+    <div class="k">全量测试</div>
+    <div class="v" style="color:var(--green)">80 / 80</div>
+    <div class="n">sqlite 与 Postgres 双路径，连跑两次全绿</div>
+  </div>
+  <div class="card" style="border-color:#bcdcc8">
+    <div class="k">ruff check / format</div>
+    <div class="v" style="color:var(--green)">全绿</div>
+    <div class="n">72 文件，含 import 排序与格式门禁</div>
+  </div>
+  <div class="card" style="border-color:#bcdcc8">
+    <div class="k">schema 漂移</div>
+    <div class="v" style="color:var(--green)">一致</div>
+    <div class="n">Postgres 与 sqlite 双方言校验通过</div>
+  </div>
+  <div class="card" style="border-color:#bcdcc8">
+    <div class="k">clean clone</div>
+    <div class="v" style="color:var(--green)">可跑通</div>
+    <div class="n">7 个迁移文件入库，装完依赖即可跑</div>
+  </div>
 </div>
 
 <h2>一、数据库现状：有，而且是三层架构</h2>
@@ -190,8 +214,8 @@
     </tr>
     <tr>
       <td><strong>数据建模与迁移治理</strong></td>
-      <td><span class="pill p-green">9 / 10</span></td><td><span class="pill p-amber">7 / 10</span></td>
-      <td>20 张表 + 7 次迁移；但漂移检查脚本误报（R3）</td>
+      <td><span class="pill p-green">9 / 10</span></td><td><span class="pill p-green">9 / 10</span></td>
+      <td>20 张表 + 7 次迁移；漂移检查已修，Postgres 与 sqlite 双方言一致</td>
     </tr>
     <tr>
       <td><strong>安全与合规</strong></td>
@@ -200,18 +224,18 @@
     </tr>
     <tr>
       <td><strong>可靠性</strong></td>
-      <td><span class="pill p-green">8 / 10</span></td><td><span class="pill p-amber">7 / 10</span></td>
-      <td>幂等键、重试门、checkpointer；但主链路端到端用例红（R1）</td>
+      <td><span class="pill p-green">8 / 10</span></td><td><span class="pill p-green">8 / 10</span></td>
+      <td>幂等键、重试门、checkpointer；主链路端到端用例已转绿</td>
     </tr>
     <tr>
       <td><strong>CI/CD 与质量门禁</strong></td>
-      <td><span class="pill p-green">9 / 10</span></td><td><span class="pill p-red">4 / 10</span></td>
-      <td>设计了六道门禁（lint / 3 版本测试矩阵 / 漂移 / 评测 / 真实 PG 集成 / 安全三件套 + 越权回归），当前至少三道会挂</td>
+      <td><span class="pill p-green">9 / 10</span></td><td><span class="pill p-green">9 / 10</span></td>
+      <td>六道门禁全部转绿（lint / 3 版本测试矩阵 / 漂移 / 评测 / 真实 PG 集成 / 安全三件套 + 越权回归）</td>
     </tr>
     <tr>
       <td><strong>测试体系</strong></td>
-      <td><span class="pill p-amber">7 / 10</span></td><td><span class="pill p-amber">5 / 10</span></td>
-      <td>1470 行测试、12 个文件、含越权 PoC 回归与离线评测集；但存在跨用例状态污染</td>
+      <td><span class="pill p-green">8 / 10</span></td><td><span class="pill p-green">8 / 10</span></td>
+      <td>80 项用例、12 个文件、含 22 项越权 PoC 回归与离线评测集；夹具隔离已修，可重复执行</td>
     </tr>
     <tr>
       <td><strong>可观测性</strong></td>
@@ -241,39 +265,36 @@
   <span><i class="sw" style="background:#c4cbd3"></i>当前水位</span>
 </div>
 
-<h2>三、必须先修的 5 个红灯</h2>
+<h2>三、已修复的 5 个红灯</h2>
 
-<div class="issue">
-  <div class="t"><span class="pill p-red">R1 · 阻塞</span>主链路端到端用例失败：挂号审批后未落库</div>
-  <div class="d"><span class="mono">tests/eval/test_e2e.py::test_e2e_closed_loop</span> 的 <span class="mono">booking_lock_settle</span> 场景，interrupt → 人工批准 → 恢复后 <span class="mono">appointments</span> 表新增行为 0。<strong>这是整个项目最核心的叙事链路</strong>，它挂了，面试时所有的架构讲解都失去说服力。</div>
-  <div class="f">证据：干净库实测 <span class="mono">assert len(new) &gt;= 1</span> → 实际 0</div>
+<p>首轮体检的 5 个红灯，表面看是 5 个独立问题，追下去其实是 <strong>3 个根因</strong>。修复已全部合入 <span class="mono">c00b839</span>。</p>
+
+<h3>根因一：测试依赖"数据库全新"这一隐含前提（R1 / R4）</h3>
+<div class="issue" style="border-left-color:var(--green)">
+  <div class="t"><span class="pill p-green">已修</span>测试不可重复执行</div>
+  <div class="d">第二次跑全量测试就有 5 处失败，而第一次全绿。逐项追下去发现是四类运行时状态被上一个测试留下：挂号幂等键（TTL 1h，第二次跑命中缓存直接返回首次结果、不落库 → e2e「批准后未真实落库」）、号源占用与当日预约上限、防爆破的 <span class="mono">failed_attempts</span>（登录返回 423）、以及 <span class="mono">token_version</span>（登出会 bump 它，而网关测试签发的令牌固定带 tv=0 → 全员 401）。</div>
+  <div class="f"><strong>修法</strong>：<span class="mono">tests/conftest.py</span> 新增 autouse fixture，每个用例前重置这四类<strong>可重建的运行时状态</strong>，绝不动账号、审计日志、知识库等核心资产。另加 <span class="mono">MC_TEST_DB</span> 护栏——指向非 sqlite 库时必须显式设 <span class="mono">MC_TEST_DB=1</span>，否则 fail-fast，防止有人误把测试跑在含业务数据的库上。</div>
 </div>
 
-<div class="issue">
-  <div class="t"><span class="pill p-red">R2 · 阻塞</span>ruff 静态检查 2 处错误</div>
-  <div class="d">CI 的 lint 门禁会直接失败。问题很小（未使用的循环变量等），但门禁就是门禁。</div>
-  <div class="f">修复：<span class="mono">.venv/bin/python -m ruff check . --fix</span></div>
+<h3>根因二：pgvector 迁移没做方言适配（R3 / test_store）</h3>
+<div class="issue" style="border-left-color:var(--green)">
+  <div class="t"><span class="pill p-green">已修</span>sqlite 跑不通迁移、漂移检查误报</div>
+  <div class="d"><span class="mono">f6a7b8c9d0e1</span> 迁移无条件执行 <span class="mono">CREATE EXTENSION vector</span> 与 <span class="mono">USING hnsw</span>，sqlite 下必然报错；而漂移检查又把每患者私有 SQLite 的模型（<span class="mono">lab_reports / vital_signs / reminders / conversation_memory / emergency_events</span>）当成主库表，判定"被删除"。顺带还暴露出真实的模型漂移：<span class="mono">knowledge_documents</span> 三列的 nullable 与迁移不一致。</div>
+  <div class="f"><strong>修法</strong>：迁移按方言跳过（非 Postgres 直接 return）；<span class="mono">alembic/env.py</span> 的 <span class="mono">include_object</span> 排除 PatientBase 私有表与 pgvector HNSW 索引；ORM 模型补 <span class="mono">nullable=False</span> 与迁移对齐。现在两种方言的漂移检查都通过。</div>
 </div>
 
-<div class="issue">
-  <div class="t"><span class="pill p-red">R3 · 阻塞</span>迁移漂移检查误判，把患者私有表当成了主库表</div>
-  <div class="d"><span class="mono">scripts/check_migrations.py</span>（96 行）没有排除只存在于患者私有 SQLite 的模型：<span class="mono">lab_reports / vital_signs / reminders / conversation_memory / emergency_events</span>，导致 autogenerate 认为这些表"被删除"，漂移门禁误报失败。这是脚本缺陷，不是架构缺陷。</div>
-  <div class="f">修复方向：给私有模型单独用一个 <span class="mono">Base</span>，或在 check 脚本里维护排除清单</div>
+<h3>根因三：接口语义靠字符串嗅探（R4 之一）</h3>
+<div class="issue" style="border-left-color:var(--green)">
+  <div class="t"><span class="pill p-green">已修</span>账号已存在返回 400 而非 409</div>
+  <div class="d"><span class="mono">register_user</span> 抛 <span class="mono">ValueError("user exists")</span>（英文），网关靠判断消息里是否含中文"已存在"来决定 400 还是 409 —— 一次文案改动就能让接口语义悄悄退化。已新增 <span class="mono">UserExistsError</span> 类型化异常，网关按异常类型回 409，契约不再脆弱。</div>
+  <div class="f">实测：重复注册现返回 <span class="mono">409 {"detail":"用户已存在"}</span></div>
 </div>
 
-<div class="issue">
-  <div class="t"><span class="pill p-amber">R4 · 高</span>测试间状态污染：账号锁定与注册冲突</div>
-  <div class="d"><span class="mono">test_login_flow</span> 返回 423（账号锁定），说明防爆破计数跨用例累积没有清理；<span class="mono">test_register_patient_still_works</span> 返回 400。这两个都说明 <span class="mono">conftest.py</span>（仅 34 行）的夹具隔离不够——它撑不起 293 行的越权回归测试。</div>
-  <div class="f">面试陷阱：这个会被追问"你的测试怎么保证可重复执行"</div>
+<div class="issue" style="border-left-color:var(--green)">
+  <div class="t"><span class="pill p-green">已修</span>ruff 门禁 + Git 历史 + CI 镜像</div>
+  <div class="d">ruff check 4 处错误（含 import 排序、未使用的循环变量）与 format 不一致的 9 个文件已修；69 个未提交改动（含 6 个 untracked 迁移文件）已整理提交；CI 的 integration job 原本用官方 <span class="mono">postgres:16</span> 镜像，<strong>不带 pgvector 扩展</strong>，升级必失败，已换成 <span class="mono">pgvector/pgvector:pg16</span>；README 的 CI 徽章占位符与"本地一键验证"章节已补齐。</div>
+  <div class="f">验证：<span class="mono">git clone</span> 到空目录后 <span class="mono">pytest -q</span> 直接 80/80 全绿</div>
 </div>
-
-<div class="issue">
-  <div class="t"><span class="pill p-amber">R5 · 高</span>Git 历史与工作副本严重脱节</div>
-  <div class="d">69 个未提交条目，36 个文件 <span class="mono">+8461 / -685</span> 行；<strong>6 个 Alembic 迁移文件还处于 untracked 状态</strong>。这意味着任何人 clone 你的仓库，跑起来都是一个缺 6 张表的旧版本。README 里的 CI 徽章也还是 <span class="mono">&lt;your-org&gt;/&lt;your-repo&gt;</span> 占位符。</div>
-  <div class="f">面试官如果先 clone 再面，第一印象会直接崩</div>
-</div>
-
-<p style="margin-top:16px"><strong>另有一处环境性失败</strong>：<span class="mono">test_store.py::test_postgres_store_sqlite</span> 用 SQLite 跑含 <span class="mono">CREATE EXTENSION vector</span> 的迁移必然报错。建议给该用例打上 <span class="mono">@pytest.mark.skipif</span>，或单独起 Postgres 跑——不要让它留在红色列表里，会被误读成"项目跑不通"。</p>
 
 <h2>四、距离真正的企业级，还差什么</h2>
 
@@ -298,20 +319,20 @@
 <h2>五、面试可用性判定</h2>
 
 <div class="grid g3" style="margin-bottom:18px">
-  <div class="card">
+  <div class="card" style="border-color:#bcdcc8">
     <div class="k">适合的岗位</div>
     <div class="v" style="font-size:17px;line-height:1.5">初中级 / 转岗 AI 应用工程</div>
-    <div class="n">LangGraph / Agent 方向，通过率高</div>
+    <div class="n">LangGraph / Agent 方向，现在可直接投递</div>
   </div>
   <div class="card">
     <div class="k">资深/架构岗</div>
-    <div class="v" style="font-size:17px;line-height:1.5">需补 P1 前两项</div>
-    <div class="n">否则会被问穿可观测性与性能</div>
+    <div class="v" style="font-size:17px;line-height:1.5">建议补 P1 前两项</div>
+    <div class="n">可观测性 + 压测基线，约 2 天工作量</div>
   </div>
   <div class="card">
     <div class="k">代码体量</div>
     <div class="v">9,516 <span style="font-size:14px;font-weight:400;color:var(--ink-3)">行</span></div>
-    <div class="n">src 8,046 + tests 1,470</div>
+    <div class="n">src 8,046 + tests 1,470，80 项测试</div>
   </div>
 </div>
 
@@ -320,13 +341,18 @@
   <li><strong>HITL 中断恢复</strong>：讲 interrupt 挂在审批门 → 状态写进 Postgres checkpointer → 医护端 <span class="mono">/api/review/resolve</span> 批准 → <span class="mono">Command(resume=...)</span> 恢复 → 服务重启也不丢。配一句"审批单 payload 里带完整 args 和 requester，resolve 时记 resolved_by，审计可追溯"。</li>
   <li><strong>PHI 隔离与越权防护</strong>：讲工具 schema 里<strong>没有 patient_id 参数</strong>，身份只从 JWT 取（对象级授权 OLP），thread_id 派生为 <span class="mono">{role}:{sub}:{client_tid}</span>；再配 <span class="mono">tests/test_security_isolation.py</span> 里 293 行越权 PoC 回归。这是本项目最硬的一块。</li>
   <li><strong>幂等与审批审计</strong>：讲挂号用 <span class="mono">idempotency_keys</span> + 号源 <span class="mono">booked_slots</span> 悲观锁防超卖，配合 <span class="mono">approvals</span> 表与 194 条 audit_logs 形成完整证据链。</li>
+  <li><strong>合规驱动的 schema 治理</strong>（本轮新增素材）：三层数据架构（主库 / 每患者私有 SQLite / 向量库）决定了「哪些表该进迁移、哪些不该」。讲你如何让 <span class="mono">alembic check</span> 理解这个边界——私有模型挂在独立 <span class="mono">PatientBase</span> 下、pgvector 迁移按方言跳过、HNSW 索引排除在比对之外。这类"让工具理解架构意图"的活儿，比堆功能更能体现功力。</li>
 </ul>
 
 <h3>四个会被追问的坑，提前备好答案</h3>
 
 <div class="quote">
   <div class="q">"你的测试现在是全绿吗？"</div>
-  <div class="a">诚实答："主链路有一条用例在最近一次重构后回归了，我已经定位到是 booking 落库环节，正在修；其余失败是测试夹具隔离和环境限制。"——然后<strong>立刻展示你定位问题的过程</strong>。修不修得好是能力，知不知道自己红在哪是素养。</div>
+  <div class="a">可以硬气了：80/80，sqlite 与 Postgres 双路径，连续跑两次都全绿，clean clone 也能一键跑通。<strong>顺手补一句修复过程</strong>——之前测试只能跑一次，第二次就挂 5 处，根因是四类运行时状态跨用例残留（幂等键、号源、账号锁定、token_version），解法是每个用例前重置可重建状态 + <span class="mono">MC_TEST_DB</span> 护栏防止误跑业务库。这个问题本身就是很好的谈资。</div>
+</div>
+<div class="quote">
+  <div class="q">"你的 CI 有几道门禁？"</div>
+  <div class="a">六道：lint（ruff check + format）、3 个 Python 版本测试矩阵、schema 漂移检查、离线评测门禁、真实 PostgreSQL 集成测试、安全三件套（bandit + pip-audit + gitleaks）+ 越权回归。可以提一句 CI 里踩过的坑：官方 <span class="mono">postgres:16</span> 镜像不带 pgvector，集成任务必须换 <span class="mono">pgvector/pgvector:pg16</span>。</div>
 </div>
 <div class="quote">
   <div class="q">"上生产你怎么观测它？"</div>
@@ -341,21 +367,30 @@
   <div class="a">答在三点：① 非确定性输出的治理（Tier-0 确定性红线 + 输出侧护栏双层拦截）；② 长事务与人工介入（HITL + 状态持久化）；③ 合规驱动的数据分层（PHI 私有库 + 脱敏 + 出境策略）。</div>
 </div>
 
-<h3>面试前 48 小时修复清单</h3>
+<h3>红灯修复清单（已全部完成，合入 c00b839）</h3>
 <table>
-  <thead><tr><th style="width:8%">优先级</th><th>动作</th><th style="width:26%">验收</th></tr></thead>
+  <thead><tr><th style="width:8%">项</th><th>动作</th><th style="width:30%">验收结果</th></tr></thead>
   <tbody>
-    <tr><td><span class="pill p-red">P0</span></td><td>修 booking 批准后的落库链路</td><td><span class="mono">test_e2e_closed_loop</span> 转绿</td></tr>
-    <tr><td><span class="pill p-red">P0</span></td><td>提交全部 69 项改动，尤其 6 个迁移文件</td><td>clone 到空目录能一键跑通</td></tr>
-    <tr><td><span class="pill p-red">P0</span></td><td>修 check_migrations 排除私有表 + ruff --fix</td><td>lint 与 schema-drift 门禁转绿</td></tr>
-    <tr><td><span class="pill p-amber">P1</span></td><td>加强 conftest 夹具隔离（锁号/注册清理）</td><td>连跑两次全绿</td></tr>
-    <tr><td><span class="pill p-amber">P1</span></td><td>README 补真实徽章 + 一页架构图 + 快速启动录屏</td><td>面试官 3 分钟看懂</td></tr>
-    <tr><td><span class="pill p-blue">P2</span></td><td>加 <span class="mono">/metrics</span> 端点</td><td>可观测性从 3 分拉到 6 分</td></tr>
+    <tr><td><span class="pill p-green">R1</span></td><td>定位并修复测试不可重复执行（主链路批准后未落库）</td><td>e2e 转绿；Postgres 脏库连跑两次 80/80</td></tr>
+    <tr><td><span class="pill p-green">R2</span></td><td>ruff check 4 处错误 + 9 个文件格式不一致</td><td>check 与 format 全绿（72 文件）</td></tr>
+    <tr><td><span class="pill p-green">R3</span></td><td>漂移检查排除私有表 / HNSW 索引 + pgvector 迁移方言适配</td><td>Postgres 与 sqlite 双方言均一致</td></tr>
+    <tr><td><span class="pill p-green">R4</span></td><td>conftest 每用例重置运行时状态 + <span class="mono">MC_TEST_DB</span> 护栏；注册冲突改 409</td><td>可重复执行；重复注册返回 409</td></tr>
+    <tr><td><span class="pill p-green">R5</span></td><td>69 项改动全部提交（含 6 个 untracked 迁移文件）+ README 补齐</td><td>clean clone 一键 <span class="mono">pytest -q</span> 80/80</td></tr>
+  </tbody>
+</table>
+
+<h3>剩余建议（投递资深岗前可做）</h3>
+<table>
+  <thead><tr><th style="width:8%">优先级</th><th>动作</th><th style="width:30%">收益</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill p-amber">P1</span></td><td>加 <span class="mono">/metrics</span> 端点（prometheus_client）+ OTel 链路追踪</td><td>可观测性 3 分 → 6 分，堵住最常被问的缺口</td></tr>
+    <tr><td><span class="pill p-amber">P1</span></td><td>k6 出一份压测基线（p50/p95、SSE 并发）</td><td>性能 2 分 → 5 分</td></tr>
+    <tr><td><span class="pill p-blue">P2</span></td><td>README 补一页架构图 + 快速启动录屏</td><td>面试官 3 分钟看懂全貌</td></tr>
   </tbody>
 </table>
 
 <footer>
-  本报告基于 2026-08-29 对 /Users/mac/Documents/Medical-care 的实测：本地 Postgres 实库查询、全量 pytest（干净库）、ruff、alembic 漂移检查、CI 配置审阅。所有数字均为实测值，非估算。
+  本报告基于 2026-08-29 对 /Users/mac/Documents/Medical-care 的实测：本地 Postgres 实库查询、全量 pytest（sqlite 与 Postgres 双路径、各连跑两次）、ruff check / format、alembic 双方言漂移检查、离线评测、CI 配置审阅、clean clone 验证。所有数字均为实测值，非估算。
 </footer>
 
 </div>

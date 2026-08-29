@@ -1,12 +1,30 @@
 # 医疗预约诊疗系统 Agent（LangGraph 中枢辐射编排）
 
-[![CI](https://github.com/<your-org>/<your-repo>/actions/workflows/ci.yml/badge.svg)](https://github.com/<your-org>/<your-repo>/actions/workflows/ci.yml)
-
-> 把上面徽章里的 `<your-org>/<your-repo>` 替换成你自己的 GitHub 仓库路径即可。
+<!-- 推送到 GitHub 后，把下面两处 `OWNER/REPO` 换成实际仓库路径，CI 徽章即可生效。 -->
+[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
 
 基于链路图落地的**可运行**脚手架：中枢辐射（hub-and-spoke）编排 + 人工审核门（Human-in-the-Loop）+ 合规横切层，技术栈 **LangGraph + FastAPI**。
 
 默认 `LLM_MODE=fake`，**无需任何 API key 即可端到端跑通**；可一键切换到 `ollama` / `openai` / `qwen`。
+
+## 本地一键验证（等价于 CI）
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+ruff check .                       # 静态检查
+ruff format --check .              # 格式门禁
+pytest -q                          # 80 项测试，默认临时 sqlite，无需外部服务
+python scripts/check_migrations.py # ORM 模型与迁移一致性（防漂移）
+python scripts/eval_offline.py     # 红线 + 意图离线评测
+```
+
+指向真实 PostgreSQL 时需显式确认是测试库（避免误清业务数据）：
+
+```bash
+DATABASE_URL=postgresql+psycopg2://user@host:5432/db MC_TEST_DB=1 pytest -q
+```
 
 ## 目录结构
 
