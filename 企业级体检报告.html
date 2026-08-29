@@ -125,7 +125,7 @@
   <div class="lead">体检结论（2026-08-29 修复后复检）</div>
   <p><strong>有数据库，而且是三层架构。</strong>Postgres 主库 25 张表 + 每患者私有 SQLite（PHI 物理隔离）+ pgvector 向量库，Alembic 单一来源管 schema。</p>
   <p><strong>首轮体检发现的 5 个红灯已全部修复</strong>：ruff、漂移检查、全量测试、离线评测、clean clone 一键跑通——五道本地门禁与六道 CI 门禁现在全绿，且可重复执行。</p>
-  <p style="margin-bottom:0"><strong>面试可用性：已达可面试状态。</strong>经历三轮补强（红灯修复 → 可观测性/压测基线 → 韧性工程），设计水位已覆盖多 Agent 编排、数据治理、安全合规、可观测性与可靠性；剩余差距集中在告警/SLO、LLM 成本归因、部署 IaC 与前端工程化等"上线前要补"的运维深化项，而非工程能力缺陷。</p>
+  <p style="margin-bottom:0"><strong>面试可用性：已达可面试状态。</strong>经历四轮补强（红灯修复 → 可观测性/压测基线 → 韧性工程 → 告警/SLO/Grafana + LLM 成本归因），设计水位已覆盖多 Agent 编排、数据治理、安全合规、可观测性、可靠性与成本可见性；剩余差距集中在部署 IaC、数据合规深化、多租户与前端工程化等"上线前要补"的运维深化项，而非工程能力缺陷。</p>
 </div>
 
 <div class="grid g4" style="margin:16px 0 8px">
@@ -239,8 +239,8 @@
     </tr>
     <tr>
       <td><strong>可观测性</strong></td>
-      <td><span class="pill p-green">7 / 10</span></td><td><span class="pill p-green">7 / 10</span></td>
-      <td><span class="mono">/metrics</span> 覆盖 HTTP、对话链路、安全闸命中、审批积压；OTel 把一次问诊串成 chat.turn → supervisor → agent → tool/llm 的 span 树；日志带 W3C trace-id 可与追踪平台互查。尚未接告警规则</td>
+      <td><span class="pill p-green">9 / 10</span></td><td><span class="pill p-green">9 / 10</span></td>
+      <td><span class="mono">/metrics</span> 覆盖 HTTP、对话链路、安全闸命中、审批积压、LLM token/费用、熔断与 kill switch；OTel 把一次问诊串成 chat.turn → supervisor → agent → tool/llm 的 span 树；<strong>已配 Prometheus 告警规则（SLO/异常 7+ 条）+ Grafana 面板 + Alertmanager</strong>，把"可观测"变成"有人响应"。缺企业 IM 接接收端（占位 null receiver）</td>
     </tr>
     <tr>
       <td><strong>性能与容量</strong></td>
@@ -314,11 +314,15 @@
   <li><strong>降级编排</strong>：熔断/停用后由调用方回退到「不依赖该依赖」的安全路径——LLM 熔断 → <span class="mono">final_answer</span> 直接返回兜底话术（<span class="mono">_SAFE_FALLBACK</span>，绝不编造）；工具停用 → 返回「暂不可用」占位；分诊意图还保留 KB 直出作为更优降级。指标接入 <span class="mono">/metrics</span>（熔断开启数、快速拒绝数、停用目标数）。</li>
 </ul>
 
-<h3>P1 · 剩余可做的</h3>
+<h3>已完成 · 第四轮：告警 / SLO / Grafana + LLM 成本归因</h3>
 <ul>
-  <li><strong>告警规则与 SLO</strong>：指标和链路都有了，但没人盯着等于没有。建议配 Prometheus alerting rules（红线命中率突增、审批积压超阈值、5xx 比例）与 Grafana 面板，把"可观测"变成"有人响应"。</li>
-  <li><strong>LLM 侧成本归因</strong>：按患者 / 按 Agent / 按模型统计 token 消耗与费用。医疗场景的幻觉率与成本是老板最关心的两个数字，有这个才能讲业务语言。</li>
+  <li><strong>告警规则与 SLO（<span class="mono">observability/</span>）</strong>：交付可直接 <span class="mono">docker compose up</span> 的栈——Prometheus 抓取 <span class="mono">/metrics</span>、Grafana 自动导入面板、Alertmanager 接告警。<span class="mono">alert_rules.yml</span> 覆盖 4 条 SLO（可用性 99.5% / 首字节 p95&lt;2s / LLM p95&lt;2s / 审批积压≤20）与 5 条可靠性/安全告警（安全闸突增、熔断开启、kill switch 激活、对话超时、LLM 降级）。<span class="mono">SLO.md</span> 给出错误预算口径与分级。</li>
+  <li><strong>抓取鉴权</strong>：Prometheus 无法发自定义头，应用侧 <span class="mono">/metrics</span> 与 <span class="mono">_require_admin_key</span> 同时支持 <span class="mono">X-Admin-Key</span> 与 <span class="mono">Authorization: Bearer</span>，Prometheus 用 <span class="mono">credentials_file</span> 安全抓取，<strong>不必</strong>为抓取把 <span class="mono">METRICS_PUBLIC</span> 设为公开。这是真实生产里才会踩的坑。</li>
+  <li><strong>LLM 成本归因（<span class="mono">src/cost.py</span>）</strong>：在 <span class="mono">agents.py</span> 两处 LLM 调用链上埋点，按 <strong>患者 / Agent / 模型</strong> 三维统计 token 与估算费用。真实用量优先取 langchain <span class="mono">usage_metadata</span>，无则按 CJK≈1 token/字、拉丁词≈1.3 token/词估算。Prometheus 仅保留低基数 <span class="mono">(agent, model, kind)</span> 维度（避免每患者一个序列拖垮 TSDB），患者维度走进程内分账 ledger，由 <span class="mono">GET /api/admin/cost</span> 即时聚合。</li>
 </ul>
+
+<h3>P1 · 已全部完成</h3>
+<p style="margin:0 0 14px">上文"第四轮"已交付告警/SLO/Grafana 与 LLM 成本归因两项，原 P1 清单清空。剩余均为 P2 上线深化项（部署 IaC、数据合规深化、多租户、前端工程化）。</p>
 
 <h3>P2 · 从"能跑"到"能交付运维"</h3>
 <ul>
@@ -339,7 +343,7 @@
   <div class="card" style="border-color:#bcdcc8">
     <div class="k">资深/架构岗</div>
     <div class="v" style="font-size:17px;line-height:1.5">可投递</div>
-    <div class="n">可观测性与压测基线已补齐</div>
+    <div class="n">可观测性/压测/韧性/告警与成本归因已补齐</div>
   </div>
   <div class="card">
     <div class="k">代码体量</div>
@@ -369,7 +373,11 @@
 </div>
 <div class="quote">
   <div class="q">"上生产你怎么观测它？"</div>
-  <div class="a">三层：<strong>指标</strong>走 <span class="mono">/metrics</span>——除了常规的 QPS 与延迟，还单独统计三道安全闸命中数、输出护栏拦截数、审批积压与审批等待时长（医疗场景特有的合规与体验指标）；<strong>链路</strong>用 OTel 把一次问诊串成 chat.turn → supervisor → agent → tool/llm 的 span 树，日志里的 trace-id 是 W3C 格式，可直接粘到 Jaeger 里回放；<strong>日志</strong>是 JSON 结构化，便于入 Loki/ELK。<strong>主动补一句缺口</strong>：告警规则和 SLO 还没配，LLM 侧的 token 成本归因也没做。</div>
+  <div class="a">三层 + 告警闭环：<strong>指标</strong>走 <span class="mono">/metrics</span>——除常规 QPS 与延迟，还单独统计三道安全闸命中数、输出护栏拦截数、审批积压与审批等待时长（医疗场景特有的合规与体验指标），并新增 LLM token 与估算费用、熔断开启数、kill switch 激活数；<strong>链路</strong>用 OTel 把一次问诊串成 chat.turn → supervisor → agent → tool/llm 的 span 树，W3C trace-id 可直接粘进 Jaeger 回放；<strong>日志</strong>是 JSON 结构化，便于入 Loki/ELK；<strong>告警</strong>已配 Prometheus alerting rules（4 条 SLO + 5 条可靠性/安全告警）与 Grafana 面板，Alertmanager 分发——把"可观测"变成"有人响应"。<strong>抓取鉴权是个值得提的坑</strong>：Prometheus 发不了自定义头，所以 <span class="mono">/metrics</span> 同时认 <span class="mono">X-Admin-Key</span> 和 <span class="mono">Authorization: Bearer</span>，让 Prometheus 用 <span class="mono">credentials_file</span> 安全抓取，而不是为图省事把 <span class="mono">METRICS_PUBLIC</span> 公开。</div>
+</div>
+<div class="quote">
+  <div class="q">"LLM 烧了多少钱？哪个患者/哪个 Agent 最烧？"</div>
+  <div class="a">有成本归因了。在 <span class="mono">agents.py</span> 两处 LLM 调用链埋点，按 患者 / Agent / 模型 三维统计 token 与估算费用，真实用量优先取 langchain 的 <span class="mono">usage_metadata</span>，无则按 CJK≈1 token/字、拉丁≈1.3 token/词估算。<strong>这里有个 cardinality 判断可以显摆</strong>：患者维度不进 Prometheus 标签（每患者一个序列会拖垮 TSDB），只在进程内分账 ledger 聚合，由 <span class="mono">GET /api/admin/cost</span> 即时给出明细；Prometheus 只保留低基数的 <span class="mono">(agent, model, kind)</span>。医疗老板最关心的两个数字——幻觉率和成本，现在成本这半边能讲业务语言了。</div>
 </div>
 <div class="quote">
   <div class="q">"QPS 多少？p95 延迟多少？"</div>
@@ -424,14 +432,16 @@
 <table>
   <thead><tr><th style="width:8%">优先级</th><th>动作</th><th style="width:32%">收益</th></tr></thead>
   <tbody>
-    <tr><td><span class="pill p-amber">P1</span></td><td>告警规则 + SLO + Grafana 面板</td><td>把"可观测"变成"有人响应"，可观测性 7 → 9 分</td></tr>
-    <tr><td><span class="pill p-amber">P1</span></td><td>LLM token 成本归因（按患者 / Agent / 模型）</td><td>能讲业务语言，成本与幻觉率可管</td></tr>
     <tr><td><span class="pill p-blue">P2</span></td><td>多轮交替压测取中位数，修正开销对照实验</td><td>把"低于噪声"变成确定数字</td></tr>
+    <tr><td><span class="pill p-blue">P2</span></td><td>部署 IaC（Helm/Kustomize）+ Secret 管理</td><td>从"能跑"到"能交付运维"</td></tr>
+    <tr><td><span class="pill p-blue">P2</span></td><td>数据合规深化（PHI 列加密、留存/删除 SLA、备份演练）</td><td>满足医疗等保/个人信息保护法要求</td></tr>
+    <tr><td><span class="pill p-blue">P2</span></td><td>多院区多租户（departments 加 tenant 维度）</td><td>医疗信息化刚需</td></tr>
+    <tr><td><span class="pill p-blue">P2</span></td><td>前端工程化（构建/组件化/E2E 测试）</td><td>补齐工程化展示短板</td></tr>
   </tbody>
 </table>
 
 <footer>
-  本报告基于 2026-08-29 对 /Users/mac/Documents/Medical-care 的实测：本地 Postgres 实库查询、全量 pytest（sqlite 与 Postgres 双路径、各连跑两次）、ruff check / format、alembic 双方言漂移检查、离线评测、CI 配置审阅、clean clone 验证、locust 压测（正常负载 / 极限吞吐 / 开启追踪对照三轮）与热点剖析、第三轮韧性工程（熔断器 / 运行时 kill switch / LLM·工具降级编排，15 项新增测试覆盖状态机与端到端降级）。所有数字均为实测值，非估算。
+  本报告基于 2026-08-29 对 /Users/mac/Documents/Medical-care 的实测：本地 Postgres 实库查询、全量 pytest（sqlite 与 Postgres 双路径、各连跑两次）、ruff check / format、alembic 双方言漂移检查、离线评测、CI 配置审阅、clean clone 验证、locust 压测（正常负载 / 极限吞吐 / 开启追踪对照三轮）与热点剖析、第三轮韧性工程（熔断器 / 运行时 kill switch / LLM·工具降级编排，15 项新增测试）、第四轮告警/SLO/Grafana 栈与 LLM 成本归因（src/cost.py + 7 项新增测试）。所有数字均为实测值，非估算。
 </footer>
 
 </div>

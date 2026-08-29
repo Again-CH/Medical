@@ -1,0 +1,25 @@
+# Alertmanager 基础配置：默认把告警打到日志；生产请接入企业 IM / 电话等 receiver。
+# 此处用 null receiver 占位，保证栈能启动；按需替换 receivers 与 route 即可。
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: "null"
+  group_by: ["alertname", "severity"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers:
+        - severity = "critical"
+      receiver: "null"
+      group_wait: 10s
+
+receivers:
+  - name: "null"
+
+# 生产示例（取消注释并填入真实 webhook）：
+# receivers:
+#   - name: "wecom"
+#     webhook_configs:
+#       - url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"

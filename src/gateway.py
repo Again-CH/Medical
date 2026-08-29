@@ -54,6 +54,7 @@ from .config import (
     REGISTER_ENABLED,
     TRUST_PROXY,
 )
+from .cost import cost_breakdown, reset_ledger
 from .db import (
     COMMON_EXAM_TYPES,
     EXAM_LOCATIONS,
@@ -637,12 +638,22 @@ async def create_doctor(req: Request):
 
 
 def _require_admin_key(req: Request) -> None:
-    """校验 X-Admin-Key；未配置或不符则抛 HTTP 异常。"""
+    """校验管理员密钥，支持两种传法：``X-Admin-Key`` 或 ``Authorization: Bearer``。
+
+    双通道的意义：Prometheus 抓取 ``/metrics`` 时无法发送任意自定义头，
+    但原生支持 ``authorization.credentials_file``——把同一把 ADMIN_API_KEY 存成
+    文件交给 Prometheus 即可安全抓取，不必为抓取而把 ``METRICS_PUBLIC=1`` 公开指标。
+    """
     if not ADMIN_API_KEY:
         raise HTTPException(
             status_code=503, detail="未配置 ADMIN_API_KEY，该通道已关闭（生产必须显式设置）"
         )
-    if not hmac.compare_digest(req.headers.get("x-admin-key", ""), ADMIN_API_KEY):
+    provided = req.headers.get("x-admin-key", "").strip()
+    if not provided:
+        auth = req.headers.get("authorization", "").strip()
+        if auth.lower().startswith("bearer "):
+            provided = auth[7:].strip()
+    if not hmac.compare_digest(provided, ADMIN_API_KEY):
         log.warning("security.admin_key_rejected", extra={"path": req.url.path})
         raise HTTPException(status_code=401, detail="管理员密钥无效")
 
@@ -1401,6 +1412,19 @@ async def breaker_reset(req: Request):
         reset_breakers()
         result = {"ok": True, "reset": "all"}
     return result
+
+
+@app.get("/api/admin/cost")
+async def llm_cost(req: Request, reset: bool = False):
+    """LLM 成本归因快照：按患者 / Agent / 模型三维聚合 token 与估算费用。需 X-Admin-Key。
+
+    查询参数 ``?reset=1`` 清空进程内分账 ledger（演示复位用，不影响 Prometheus TSDB 累计）。
+    返回结构见 ``src/cost.cost_breakdown``：总量 + by_patient / by_agent / by_model 明细。
+    """
+    _require_admin_key(req)
+    if reset:
+        reset_ledger()
+    return cost_breakdown()
 
 
 def _count_pending_approvals() -> Optional[int]:

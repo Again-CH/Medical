@@ -36,3 +36,7 @@ medical_agent.db
 
 # WorkBuddy 工作区记忆（本地协作日志，非交付物）
 .workbuddy/
+
+# 可观测性栈：Prometheus 抓取用的管理员密钥（含 ADMIN_API_KEY，禁止入库）
+observability/prometheus/admin_key
+

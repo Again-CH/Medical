@@ -59,6 +59,32 @@ RATE_LIMIT_RULES = {
 # 仅在内网 / sidecar 抓取场景下设为 1 关闭鉴权。
 METRICS_PUBLIC = os.getenv("METRICS_PUBLIC", "0").lower() in ("1", "true", "yes")
 
+# ---- LLM 成本归因：按患者 / Agent / 模型统计 token 与估算费用 ----
+# COST_TRACKING_ENABLED：总开关。关闭后不统计 token（压测对照 / 极简部署）。
+COST_TRACKING_ENABLED = os.getenv("COST_TRACKING_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+# 当前生效模型展示名（成本归因里 model 维度用它，避免把类名 FakeLLM/ChatOpenAI 当模型）。
+LLM_MODEL_NAME = {
+    "fake": "fake-medical",
+    "ollama": OLLAMA_MODEL,
+    "openai": OPENAI_MODEL,
+    "qwen": QWEN_MODEL,
+}.get(LLM_MODE, LLM_MODE)
+
+# 各模型单价（美元 / 1K tokens）。fake / 本地自托管计 0（不产生真实费用），
+# 真实 API 用官方公开报价（可按实际合约更新）。cost_breakdown 据此估算费用。
+LLM_PRICING = {
+    "fake-medical": {"prompt": 0.0, "completion": 0.0},
+    OLLAMA_MODEL: {"prompt": 0.0, "completion": 0.0},  # 本地自托管，不计费
+    OPENAI_MODEL: {"prompt": 0.00015, "completion": 0.0006},  # gpt-4o-mini 参考价
+    QWEN_MODEL: {"prompt": 0.0004, "completion": 0.0012},  # qwen-plus 参考价
+}
+
+
 # OpenTelemetry 链路追踪：默认关闭，配置 exporter 端点后启用。
 # 未安装 opentelemetry 相关包时自动降级为 no-op，不影响主流程。
 OTEL_ENABLED = os.getenv("OTEL_ENABLED", "0").lower() in ("1", "true", "yes")

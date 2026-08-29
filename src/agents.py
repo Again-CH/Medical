@@ -19,7 +19,9 @@ from langchain_core.messages import (
 from langgraph.types import interrupt
 
 from .compose import try_format_knowledge_reply
+from .config import LLM_MODEL_NAME
 from .context import patient_ctx, thread_ctx
+from .cost import record_llm_tokens
 from .db import clear_pending, is_db_enabled, pop_pending, set_pending
 from .llm import FakeLLM, acompose, get_llm
 from .logging_config import get_logger
@@ -32,6 +34,19 @@ from .tools.triage import _match_knowledge
 from .tracing import span
 
 log = get_logger()
+
+
+def _msgs_text(messages) -> str:
+    """把一组消息拼成纯文本，供无真实 usage 时估算 token。"""
+    parts = []
+    for m in messages or ():
+        c = getattr(m, "content", "")
+        if isinstance(c, str):
+            parts.append(c)
+        elif isinstance(c, list):  # content parts（部分模型返回）
+            parts.append("".join(getattr(x, "text", str(x)) for x in c))
+    return "\n".join(parts)
+
 
 # 每个子 Agent 的系统提示（告诉模型它的职责与可选工具）
 SYSTEM_PROMPTS = {
@@ -289,6 +304,19 @@ async def run_agent_with_tools(llm, tools, state, system, sensitive_tools, appro
                     break
             else:
                 ai = await llm_bound.ainvoke(msgs + collected)
+        # 成本归因：记录本次 LLM 调用的 token 消耗（真实 usage 优先，否则估算）。
+        # 熔断器开启分支在上方已 break，不会到此处；此处 ai 必然来自一次成功调用。
+        try:
+            record_llm_tokens(
+                patient_id=state.get("patient_id") or "anonymous",
+                agent=state.get("intent") or "unknown",
+                model=LLM_MODEL_NAME,
+                prompt_text=_msgs_text(msgs + collected),
+                completion_text=getattr(ai, "content", "") or "",
+                message=ai,
+            )
+        except Exception:  # 成本埋点失败绝不影响主链路
+            pass
         collected.append(ai)
         calls = getattr(ai, "tool_calls", None) or []
         if not calls:
@@ -456,4 +484,15 @@ async def final_answer(state):
     if not text or not text.strip():
         # 模型返回空（如限流/内容被过滤）：同样走安全降级
         return {"messages": [AIMessage(content=_SAFE_FALLBACK)]}
+    # 成本归因：compose 汇总节点的一次 LLM 调用（真实 usage 优先，否则估算）
+    try:
+        record_llm_tokens(
+            patient_id=pid,
+            agent="compose",
+            model=LLM_MODEL_NAME,
+            prompt_text=_msgs_text(msgs),
+            completion_text=text,
+        )
+    except Exception:  # 成本埋点失败绝不影响主链路
+        pass
     return {"messages": [AIMessage(content=text)]}

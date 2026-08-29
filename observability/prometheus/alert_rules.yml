@@ -1,0 +1,123 @@
+# Prometheus 告警规则：把「可观测」变成「有人响应」。
+#
+# 所有指标均带 `medical_agent_` 命名空间前缀（见 src/metrics.py）。
+# 触发阈值基于本项目压测基线（见 bench/压测基线报告.html）与体检报告 SLO 设定，
+# 可按实际容量调整。
+groups:
+  - name: medical-agent-slo
+    rules:
+      # SLO1：对话可用性 99.5%（5xx 占比 < 0.5%，持续 5 分钟）
+      - alert: MedicalAgentHighErrorRate
+        expr: |
+          (
+            sum(rate(medical_agent_http_requests{status=~"5.."}[5m]))
+            /
+            sum(rate(medical_agent_http_requests[5m]))
+          ) > 0.005
+        for: 5m
+        labels:
+          severity: critical
+          slo: availability
+        annotations:
+          summary: "对话接口 5xx 错误率超 SLO（{{ $value | humanizePercentage }}）"
+          description: "5xx 占比超过 0.5% 阈值，已持续 5 分钟。检查应用日志与下游依赖。"
+          runbook: "https://internal.wiki/medical-agent/runbook/error-rate"
+
+      # SLO2：首字节延迟 p95 < 2s（患者体感）
+      - alert: MedicalAgentFirstTokenSLO
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(medical_agent_chat_first_token_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+          slo: latency
+        annotations:
+          summary: "对话首字节延迟 p95 超过 2s SLO（{{ $value | humanizeDuration }}）"
+          description: "患者发出消息到收到首 token 的 p95 超过 2 秒，体感卡顿。"
+          runbook: "https://internal.wiki/medical-agent/runbook/latency"
+
+      # SLO3：LLM 调用延迟 p95 < 2s
+      - alert: MedicalAgentLLMLatencySLO
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(medical_agent_llm_duration_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+          slo: latency
+        annotations:
+          summary: "LLM 调用延迟 p95 超过 2s（{{ $value | humanizeDuration }}）"
+          description: "模型推理变慢，可能是供应商限速或实例过载。"
+
+      # SLO4：审批积压（患者干等）—— 待审批 > 20 持续 10 分钟
+      - alert: MedicalAgentApprovalBacklog
+        expr: medical_agent_approvals_pending > 20
+        for: 10m
+        labels:
+          severity: warning
+          slo: ops
+        annotations:
+          summary: "人工审核积压 {{ $value }} 单"
+          description: "敏感操作（医保结算/转诊/120）审批队列堆积，患者正在干等。"
+
+  - name: medical-agent-reliability
+    rules:
+      # 安全闸命中突增：10 分钟增量 > 30（可能是注入攻击或异常流量）
+      - alert: MedicalAgentSafetyGateSpike
+        expr: increase(medical_agent_safety_gate_hits[10m]) > 30
+        for: 0m
+        labels:
+          severity: critical
+          category: security
+        annotations:
+          summary: "Tier-0 安全闸 10 分钟命中 {{ $value | printf \"%.0f\" }} 次"
+          description: "急症/定位违规/知情同意硬闸命中突增，可能遭受越权或注入试探。"
+
+      # 熔断器开启：依赖被隔离
+      - alert: MedicalAgentBreakerOpen
+        expr: increase(medical_agent_breaker_opens[10m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          category: resilience
+        annotations:
+          summary: "熔断器开启（依赖被隔离）"
+          description: "某下游依赖连续失败触发熔断，流量已被快速失败隔离。确认依赖恢复后手动复位。"
+
+      # 运行时 kill switch 激活：某工具/意图被运维停用
+      - alert: MedicalAgentKillSwitchActive
+        expr: medical_agent_killswitch_active > 0
+        for: 5m
+        labels:
+          severity: info
+          category: resilience
+        annotations:
+          summary: "有 {{ $value }} 个工具/意图处于运行时停用状态"
+          description: "运维主动摘流量（下游宕机）。系统走安全降级，确认恢复后可重新启用。"
+
+      # 对话超时突增：10 分钟 > 5 次
+      - alert: MedicalAgentChatTimeoutSpike
+        expr: increase(medical_agent_chat_timeouts[10m]) > 5
+        for: 0m
+        labels:
+          severity: warning
+          category: reliability
+        annotations:
+          summary: "对话超时 {{ $value | printf \"%.0f\" }} 次（10 分钟）"
+          description: "LLM/下游卡死导致超时，患者侧已返回友好错误。"
+
+      # LLM 降级突增：走兜底话术次数异常
+      - alert: MedicalAgentLLMFallbackSpike
+        expr: increase(medical_agent_llm_fallbacks[10m]) > 10
+        for: 0m
+        labels:
+          severity: warning
+          category: reliability
+        annotations:
+          summary: "LLM 降级兜底 {{ $value | printf \"%.0f\" }} 次（10 分钟）"
+          description: "大量请求因 LLM 失败走安全兜底，模型服务可能不稳定。"

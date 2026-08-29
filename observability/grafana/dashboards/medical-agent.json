@@ -1,0 +1,186 @@
+{
+  "uid": "medical-agent",
+  "title": "医疗 Agent 可观测面板",
+  "description": "对话延迟、安全闸、审批积压、LLM 成本与韧性状态的统一视图。指标来自 /metrics（命名空间 medical_agent_）。",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "tags": ["medical-agent", "langgraph", "llm"],
+  "templating": {
+    "list": [
+      {
+        "name": "agent",
+        "type": "query",
+        "label": "Agent / 意图",
+        "datasource": "Prometheus",
+        "query": "label_values(medical_agent_llm_tokens_total, agent)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "对话可用性 (非 5xx 占比)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "red", "value": null },
+          { "color": "yellow", "value": 0.995 },
+          { "color": "green", "value": 0.999 }
+        ] }
+      },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1 - (sum(rate(medical_agent_http_requests{status=~\"5..\"}[5m])) / sum(rate(medical_agent_http_requests[5m])))"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "首字节延迟 p95 (患者体感)",
+      "type": "timeseries",
+      "gridPos": { "h": 4, "w": 9, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "options": { "legend": { "displayMode": "hidden" } },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum(rate(medical_agent_chat_first_token_seconds_bucket[5m])) by (le))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "对话端到端耗时 p95",
+      "type": "timeseries",
+      "gridPos": { "h": 4, "w": 9, "x": 15, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "options": { "legend": { "displayMode": "hidden" } },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum(rate(medical_agent_chat_duration_seconds_bucket[5m])) by (le))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "待审批积压 (患者干等)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 4 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 10 },
+          { "color": "red", "value": 20 }
+        ] }
+      },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [ { "refId": "A", "expr": "medical_agent_approvals_pending" } ]
+    },
+    {
+      "id": 5,
+      "title": "审批等待时长 p95",
+      "type": "timeseries",
+      "gridPos": { "h": 4, "w": 9, "x": 6, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "options": { "legend": { "displayMode": "hidden" } },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum(rate(medical_agent_approval_wait_seconds_bucket[5m])) by (le))"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Tier-0 安全闸命中速率",
+      "type": "timeseries",
+      "gridPos": { "h": 4, "w": 9, "x": 15, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{ gate }}",
+          "expr": "sum(rate(medical_agent_safety_gate_hits[5m])) by (gate)"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "LLM Token 消耗速率 (by agent/model)",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{ agent }}/{{ model }}/{{ kind }}",
+          "expr": "sum(rate(medical_agent_llm_tokens_total[5m])) by (agent, model, kind)"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "LLM 估算费用速率 (by agent, $/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{ agent }}",
+          "expr": "sum(rate(medical_agent_llm_cost_usd_total[5m])) by (agent)"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "韧性状态：熔断开启累计 / Kill-switch 激活",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 14 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "green", "value": null },
+          { "color": "red", "value": 1 }
+        ] }
+      },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "breaker_opens", "expr": "increase(medical_agent_breaker_opens[1h])" },
+        { "refId": "B", "legendFormat": "killswitch_active", "expr": "medical_agent_killswitch_active" }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "LLM 降级兜底次数 (10m)",
+      "type": "timeseries",
+      "gridPos": { "h": 4, "w": 16, "x": 8, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "options": { "legend": { "displayMode": "hidden" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "fallbacks", "expr": "increase(medical_agent_llm_fallbacks[10m])" }
+      ]
+    }
+  ]
+}

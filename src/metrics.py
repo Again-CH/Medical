@@ -141,6 +141,22 @@ KILLSWITCH_ACTIVE = Gauge(
     "killswitch_active", "当前处于运行时停用状态的目标数量（工具 / 意图）", namespace=NAMESPACE
 )
 
+# ---------- LLM 成本归因（按 Agent / 模型 / 患者） ----------
+# 注意：patient 维度不进 Prometheus 标签（避免高基数拖垮 TSDB），
+# 仅在内存分账 ledger 里统计；Prometheus 侧只保留低基数的 (agent, model, kind)。
+LLM_TOKENS = Counter(
+    "llm_tokens_total",
+    "LLM token 消耗（按调用方与模型）",
+    ["agent", "model", "kind"],
+    namespace=NAMESPACE,
+)
+LLM_COST_USD = Counter(
+    "llm_cost_usd_total",
+    "LLM 估算费用（美元，按调用方与模型）",
+    ["agent", "model"],
+    namespace=NAMESPACE,
+)
+
 
 @contextmanager
 def track(node: str, counter: Counter, histogram: Histogram, **labels) -> Iterator[None]:
