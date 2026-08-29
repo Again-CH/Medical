@@ -21,7 +21,7 @@ groups:
         annotations:
           summary: "对话接口 5xx 错误率超 SLO（{{ $value | humanizePercentage }}）"
           description: "5xx 占比超过 0.5% 阈值，已持续 5 分钟。检查应用日志与下游依赖。"
-          runbook: "https://internal.wiki/medical-agent/runbook/error-rate"
+          runbook_url: "docs/RUNBOOK.md#31-medicalagenthigherrorratecritical"
 
       # SLO2：首字节延迟 p95 < 2s（患者体感）
       - alert: MedicalAgentFirstTokenSLO
@@ -37,7 +37,7 @@ groups:
         annotations:
           summary: "对话首字节延迟 p95 超过 2s SLO（{{ $value | humanizeDuration }}）"
           description: "患者发出消息到收到首 token 的 p95 超过 2 秒，体感卡顿。"
-          runbook: "https://internal.wiki/medical-agent/runbook/latency"
+          runbook_url: "docs/RUNBOOK.md#32-medicalagentfirsttokenslowarning"
 
       # SLO3：LLM 调用延迟 p95 < 2s
       - alert: MedicalAgentLLMLatencySLO
@@ -53,6 +53,7 @@ groups:
         annotations:
           summary: "LLM 调用延迟 p95 超过 2s（{{ $value | humanizeDuration }}）"
           description: "模型推理变慢，可能是供应商限速或实例过载。"
+          runbook_url: "docs/RUNBOOK.md#33-medicalagentllmlatencyslowarning"
 
       # SLO4：审批积压（患者干等）—— 待审批 > 20 持续 10 分钟
       - alert: MedicalAgentApprovalBacklog
@@ -64,6 +65,7 @@ groups:
         annotations:
           summary: "人工审核积压 {{ $value }} 单"
           description: "敏感操作（医保结算/转诊/120）审批队列堆积，患者正在干等。"
+          runbook_url: "docs/RUNBOOK.md#34-medicalagentapprovalbacklogwarning"
 
   - name: medical-agent-reliability
     rules:
@@ -77,6 +79,7 @@ groups:
         annotations:
           summary: "Tier-0 安全闸 10 分钟命中 {{ $value | printf \"%.0f\" }} 次"
           description: "急症/定位违规/知情同意硬闸命中突增，可能遭受越权或注入试探。"
+          runbook_url: "docs/RUNBOOK.md#38-medicalagentsafetygatespikecritical"
 
       # 熔断器开启：依赖被隔离
       - alert: MedicalAgentBreakerOpen
@@ -88,6 +91,7 @@ groups:
         annotations:
           summary: "熔断器开启（依赖被隔离）"
           description: "某下游依赖连续失败触发熔断，流量已被快速失败隔离。确认依赖恢复后手动复位。"
+          runbook_url: "docs/RUNBOOK.md#36-medicalagentbreakeropenwarning"
 
       # 运行时 kill switch 激活：某工具/意图被运维停用
       - alert: MedicalAgentKillSwitchActive
@@ -99,6 +103,7 @@ groups:
         annotations:
           summary: "有 {{ $value }} 个工具/意图处于运行时停用状态"
           description: "运维主动摘流量（下游宕机）。系统走安全降级，确认恢复后可重新启用。"
+          runbook_url: "docs/RUNBOOK.md#37-medicalagentkillswitchactiveinfo"
 
       # 对话超时突增：10 分钟 > 5 次
       - alert: MedicalAgentChatTimeoutSpike
@@ -110,6 +115,7 @@ groups:
         annotations:
           summary: "对话超时 {{ $value | printf \"%.0f\" }} 次（10 分钟）"
           description: "LLM/下游卡死导致超时，患者侧已返回友好错误。"
+          runbook_url: "docs/RUNBOOK.md#35-medicalagentchattimeoutspikewarning"
 
       # LLM 降级突增：走兜底话术次数异常
       - alert: MedicalAgentLLMFallbackSpike
@@ -121,3 +127,4 @@ groups:
         annotations:
           summary: "LLM 降级兜底 {{ $value | printf \"%.0f\" }} 次（10 分钟）"
           description: "大量请求因 LLM 失败走安全兜底，模型服务可能不稳定。"
+          runbook_url: "docs/RUNBOOK.md#39-medicalagentllmfallbackspikewarning"

@@ -294,6 +294,20 @@ LANGSMITH_TRACING=true LANGSMITH_API_KEY=ls-xxx python scripts/eval_offline.py
 
 已内置 GitHub Actions（`.github/workflows/ci.yml`），推到 GitHub 后自动运行，覆盖「代码质量 → 测试 → 评测 → 集成」四道门禁。踩坑点与复用清单见 [`docs/ci-quickref.md`](docs/ci-quickref.md)。
 
+## 文档索引
+
+| 文档 | 用途 |
+| --- | --- |
+| [`docs/PROJECT_OVERVIEW.md`](docs/PROJECT_OVERVIEW.md) | **项目总览**——架构、数据、安全、可观测、交付、设计决策、面试话术索引 |
+| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | **运维处置手册**——9 条告警逐条处置、kill switch / 回滚 / 扩容、升级矩阵、命令速查 |
+| [`docs/DATA_COMPLIANCE.md`](docs/DATA_COMPLIANCE.md) | 数据合规——PHI 加密、留存最小化、删除权 |
+| [`docs/MULTI_TENANT.md`](docs/MULTI_TENANT.md) | 多院区 / 多租户设计与迁移 |
+| [`docs/DEPLOY_IAC.md`](docs/DEPLOY_IAC.md) | 部署与 IaC（Helm / Secret / Makefile / CD） |
+| [`docs/前端工程化.md`](docs/前端工程化.md) | Vite 构建、共享模块、严格 CSP 下的取舍 |
+| [`docs/ci-quickref.md`](docs/ci-quickref.md) | CI 踩坑与复用清单 |
+| [`observability/README.md`](observability/README.md) | 可观测栈与**告警闭环验证** |
+| [`企业级体检报告.html`](企业级体检报告.html) | 横向评分（40 项企业能力水位） |
+
 | Job | 作用 | 卡点 |
 | --- | --- | --- |
 | `lint` | `ruff check` + `ruff format --check` | 代码风格 / 明显错误 |

@@ -150,7 +150,7 @@
 - **指标**（`/metrics`）：HTTP 按路由模板统计（刻意避免高基数标签）、端到端耗时与**首字节延迟分开统计**（差值才是患者等待体感）、三道安全闸命中、审批积压与等待时长、LLM token/费用、熔断与 kill switch 状态、数据质量拒收数。
 - **链路**（OpenTelemetry）：一次问诊串成 `chat.turn → supervisor.classify → agent.<intent> → tool.call / llm.invoke` 的 span 树，W3C trace-id 可粘进 Jaeger 回放。默认关闭，未装包降级为 no-op。
 - **日志**：JSON 结构化，便于入 Loki/ELK。
-- **告警**：Prometheus 9 条规则（4 条 SLO + 5 条可靠性/安全）+ Grafana 面板 + Alertmanager，按 critical/warning/info 分级路由（10s/1m/5m 触达，30m/4h/24h 重复），配**抑制规则**防止一个故障刷出一屏告警。
+- **告警**：Prometheus 9 条规则（4 条 SLO + 5 条可靠性/安全）+ Grafana 面板 + Alertmanager，按 critical/warning/info 分级路由（10s/1m/5m 触达，30m/4h/24h 重复），配**抑制规则**防止一个故障刷出一屏告警；**每条告警的 `runbook_url` 直接指向 `docs/RUNBOOK.md` 对应章节**，值班人不用来回找文档。
   - **告警真实送达闭环**：随栈拉起本地接收端 `alert-sink`（纯标准库），手工 POST 一条告警即可验证「确实发出去了」；生产版用 `url_file` 引用企业 IM 密钥（webhook 里的 key 是凭证，绝不入库）。
 - **抓取鉴权**：Prometheus 发不了自定义头，故 `/metrics` 同时认 `X-Admin-Key` 与 `Authorization: Bearer`，用 `credentials_file` 安全抓取——**不必**为抓取把 `METRICS_PUBLIC` 公开。
 
@@ -333,9 +333,11 @@ docker compose up -d     # Prometheus :9090 / Grafana :3000 / Alertmanager :9093
 
 ### 真正的技术缺口（能靠代码补）
 
-1. **Runbook / 故障处置手册** —— 有 SLO、有告警、有面板，但缺「凌晨三点告警响了第一步看什么、什么情况摘流量、什么情况回滚」。**企业级 = 可运维，不只是可观测**。
+1. ~~**Runbook / 故障处置手册**~~ ✅ **已补齐** —— 见 [`docs/RUNBOOK.md`](RUNBOOK.md)：9 条告警逐条处置、kill switch / 熔断复位 / 回滚等通用操作、升级矩阵、命令速查表；且 **9 条告警的 `runbook_url` 已直接指向手册对应章节**（原先指向 `internal.wiki` 占位链接）。
 2. **Prompt 版本管理 + 回归卡点** —— LLM 项目最高频的改动是 prompt，但 prompt 散在 `agents.py`，无版本号；评测集已有，缺「改 prompt 必须重跑评测」的 CI 卡点。
 3. **灰度 / 金丝雀发布** —— 当前 CD 是 dev→staging→prod 全量推进；改一个 prompt 就直接作用于所有患者，生产应支持按比例放量观察。
+
+> 另：`docs/RUNBOOK.md` 末尾**如实列了 5 项尚未覆盖的运维场景**（主备切换、跨院区容灾、LLM 供应商热切换、备份恢复演练、值班表）。其中「没演练过恢复的备份，在事故中等于没有备份」——刻意保留，不假装完备。
 
 ### 已如实记录的度量局限
 
