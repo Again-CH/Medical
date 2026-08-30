@@ -28,6 +28,7 @@ def test_intent():
     with open(os.path.join(HERE, "intent_cases.json"), encoding="utf-8") as f:
         cases = json.load(f)
     for c in cases:
-        # classify_intent 已为 async（真实模型走 LLM 分类），fake 模式亦统一 await
-        got = asyncio.run(classify_intent(c["text"]))
+        # classify_intent 已为 async（真实模型走 LLM 分类），fake 模式亦统一 await。
+        # 返回值为 (intent, token_usage)——第二个元素供成本归因累加。
+        got, _usage = asyncio.run(classify_intent(c["text"]))
         assert got == c["expect"], c["text"]

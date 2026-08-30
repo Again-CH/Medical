@@ -59,6 +59,13 @@ RATE_LIMIT_RULES = {
 # 仅在内网 / sidecar 抓取场景下设为 1 关闭鉴权。
 METRICS_PUBLIC = os.getenv("METRICS_PUBLIC", "0").lower() in ("1", "true", "yes")
 
+# ---- LLM 成本熔断（防 Agent 失控循环烧钱）----
+# 0 = 不限制。判定口径是「当日累计已用 >= 预算即拒绝新的 LLM 调用」——
+# 单次调用量无法预知，按累计额卡口是自托管与云 API 的通用做法。
+# 触发后请求走安全降级（明确提示 + 引导就医），**绝不返回编造内容**。
+LLM_DAILY_TOKEN_BUDGET = int(os.getenv("LLM_DAILY_TOKEN_BUDGET", "0"))
+LLM_PER_PATIENT_DAILY_TOKEN_BUDGET = int(os.getenv("LLM_PER_PATIENT_DAILY_TOKEN_BUDGET", "0"))
+
 # ---- LLM 成本归因：按患者 / Agent / 模型统计 token 与估算费用 ----
 # COST_TRACKING_ENABLED：总开关。关闭后不统计 token（压测对照 / 极简部署）。
 COST_TRACKING_ENABLED = os.getenv("COST_TRACKING_ENABLED", "true").lower() in (

@@ -179,6 +179,13 @@
       <li><strong>Prompt 工程化（MLOps）</strong>：prompt 从代码字符串抽为版本化文本资产，manifest 记录 SHA-256 并在启动时 fail-closed 校验；
           CI 卡「<strong>改 prompt 必须重跑评测</strong>」；上线走<strong>灰度发布</strong>（按用户 / 租户 / 百分比放量，
           用户名稳定哈希保证同一患者体验一致）。</li>
+      <li><strong>可追溯性</strong>：trace_id 贯通<strong>三层</strong>——服务端日志（并转 32 位 W3C 格式，可直接粘进 Jaeger/Tempo）、
+          审计库（记录<strong>生效模型 / prompt 版本 / 租户 / 本轮 token / 结果状态</strong>）、
+          <strong>客户端</strong>（SSE 首帧下发，前端展示为「问题编号」可一键复制）。
+          运维用 <code>GET /api/trace/{trace_id}</code> 直达该轮全量上下文，报障无需再靠时间戳翻日志。</li>
+      <li><strong>成本治理</strong>：token 归因双写 Prometheus（低基数维度告警）与进程内 ledger（含患者维度明细），
+          并同步落审计表支持按轮次核算；<strong>调用 LLM 前做预算预检</strong>，当日累计超限时转安全降级话术而非继续烧钱，
+          支持全局与单患者两级、单患者超限不连坐他人。</li>
       <li><strong>交付与演练</strong>：Docker + Helm（7 个 K8s 清单模板 + 3 套环境 values，prod 用本地 Ollama 保证 PHI 不出境）；
           GitHub Actions CD（<strong>镜像按 git SHA 打标</strong> + Trivy 高危阻断 + prod 人工审批）；
           ArgoCD 拉模式 GitOps；实现备份脚本与<strong>恢复演练脚本</strong>（自动起临时库 → 恢复 → 健康查询 → 清理）。</li>
@@ -195,19 +202,25 @@
       <li><strong>HITL「已批准却没执行」</strong>：LangGraph 的 <code>interrupt()</code> 在 resume 时会<strong>重跑节点</strong>，
           若重跑时模型不再生成该敏感调用，动作就丢了。解法：把待审批 tool_calls 落 <code>pending_calls</code> 表，
           resume 时直接读取执行，保证落库确定性。</li>
+      <li><strong>成本漏记：意图分类的 LLM 调用完全隐形</strong>——真实模型模式下 <code>classify_intent</code> 会真实调一次 LLM，
+          但埋点只加在子 Agent 与汇总节点，<strong>每轮都少算一次分类调用</strong>。已补埋点，
+          并统一两种模式下的返回键名（避免调用方写两套取值逻辑又漏一处）。</li>
+      <li><strong>审计 token 恒为 0</strong>：<code>astream_events</code> 里 <code>on_chain_end</code> 的 <code>output</code>
+          只是该节点的<strong>增量</strong>，不含上游节点上报的用量，直接落库会让本轮 token 恒为 0——
+          <strong>指标看着正常，数据其实是错的</strong>。改用 <code>graph.aget_state()</code> 取累加后的状态快照。</li>
     </ul>
 
     <h3>关键结果（均为实测值）</h3>
     <div class="stats">
       <div><div class="v">11,338</div><div class="l">后端代码行数 / 44 模块</div></div>
-      <div><div class="v" style="color:var(--green)">198 / 198</div><div class="l">自动化测试通过（Postgres）</div></div>
-      <div><div class="v">54</div><div class="l">API 端点（49 条路径）</div></div>
+      <div><div class="v" style="color:var(--green)">214 / 214</div><div class="l">自动化测试通过（Postgres）</div></div>
+      <div><div class="v">55</div><div class="l">API 端点（50 条路径）</div></div>
       <div><div class="v">83 RPS</div><div class="l">30 并发压测 · 0 失败</div></div>
       <div><div class="v">0%</div><div class="l">幻觉率（32 条评测集）</div></div>
     </div>
     <ul style="margin-top:10px">
       <li><strong>性能</strong>：30 并发压测 83 RPS，p50 270ms / p95 500ms，零失败。</li>
-      <li><strong>质量门禁</strong>：ruff 零告警、Alembic <strong>13 个迁移版本零漂移</strong>、Playwright E2E 3/3。</li>
+      <li><strong>质量门禁</strong>：ruff 零告警、Alembic <strong>15 个迁移版本零漂移</strong>、Playwright E2E 3/3。</li>
       <li><strong>模型对比</strong>：本地 <code>qwen2.5:1.5b</code> 接地准确率 100%、幻觉率 0%、越界拒答 66.7%；<code>deepseek-chat</code> 三项均为 100%。</li>
     </ul>
   </div>

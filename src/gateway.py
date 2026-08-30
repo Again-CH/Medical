@@ -44,6 +44,7 @@ from .config import (
     CHAT_TIMEOUT_SECONDS,
     CORS_ORIGINS,
     CSP_STRICT,
+    LLM_MODEL_NAME,
     MAX_MESSAGE_LEN,
     METRICS_PUBLIC,
     MIN_PASSWORD_LEN,
@@ -56,7 +57,7 @@ from .config import (
     REGISTER_ENABLED,
     TRUST_PROXY,
 )
-from .cost import cost_breakdown, reset_ledger
+from .cost import cost_breakdown, reset_budget, reset_ledger
 from .db import (
     COMMON_EXAM_TYPES,
     EXAM_LOCATIONS,
@@ -444,6 +445,23 @@ def _event(payload: dict) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+async def _trace_stream(trace_id: str, agen):
+    """给 SSE 流最前面补一条 ``meta`` 事件，把 trace_id 交给客户端。
+
+    为什么必须下发 trace_id
+    ------------------------
+    此前 trace_id 只存在于服务端日志与 ``chat_logs`` 表里，**客户端拿不到**。
+    于是患者或客服报障时给不出任何可定位的 ID，只能靠「大概几点 + 用户名」
+    在审计库里人工翻——工单流程基本不可用。
+
+    下发后：前端把 trace_id 作为「问题编号」展示在每条回复下方，
+    患者一键复制，运维用 ``GET /api/trace/{trace_id}`` 直达该轮完整记录。
+    """
+    yield _event({"type": "meta", "trace_id": trace_id})
+    async for ev in agen:
+        yield ev
+
+
 def _extract_interrupt_value(config):
     """从暂停态里取出 interrupt 的载荷（兼容 langgraph 1.x 的 tasks.interrupts）。"""
     try:
@@ -470,11 +488,24 @@ def record_chat_log(
     tool_used: str,
     fallback: bool,
     start: float,
+    *,
+    model: str = "",
+    prompt_version: str = "",
+    tenant_id: int | None = None,
+    status: str = "ok",
+    error: str = "",
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
 ) -> str:
     """落库本轮对话审计记录（ChatLog），任何异常都不应影响主流程。
 
     抽离为模块级函数，供正常 LLM 链路与三道硬闸（紧急/同意/定位）复用，
     保证无论走哪条路径，审计链路都完整可回放。
+
+    可追溯增强字段（``model`` / ``prompt_version`` / ``tenant_id`` / ``status`` /
+    ``error`` / token 用量）：回答「这一轮到底发生了什么」必须能查到——
+    灰度发布后要能判断出问题的这轮用的是 v1 还是 v2 prompt；
+    成本要能按轮次核算；结果要能区分正常 / 超时 / 护栏拦截 / 降级。
     """
     latency_ms = int((time.monotonic() - start) * 1000)
     log.info(
@@ -488,6 +519,11 @@ def record_chat_log(
             "fallback": fallback,
             "latency_ms": latency_ms,
             "emitted_tokens": bool(output_text),
+            "model": model,
+            "prompt_version": prompt_version,
+            "status": status,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
         },
     )
     if is_db_enabled():
@@ -505,6 +541,13 @@ def record_chat_log(
                         tool_used=tool_used,
                         latency_ms=latency_ms,
                         fallback=fallback,
+                        model=model or LLM_MODEL_NAME,
+                        prompt_version=prompt_version,
+                        tenant_id=tenant_id,
+                        status=status,
+                        error=error[:1000],
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
                     )
                 )
                 s.commit()
@@ -973,6 +1016,8 @@ async def chat(
     trace_id = new_trace_id()
     start = time.monotonic()
     sub = user["sub"]
+    # 租户上下文已由 require_tenant_context 依赖解析写入；此处取值供审计记录落库
+    tenant_id = resolve_tenant_id()
     log.info(
         "chat.start",
         extra={
@@ -1012,12 +1057,14 @@ async def chat(
                 "emergency_gate",
                 False,
                 start,
+                status="gate",
+                tenant_id=tenant_id,
             )
             yield _event({"type": "emergency", "text": emg.response})
             yield _event({"type": "disclaimer", "text": DISCLAIMER_TEXT})
             yield _event({"type": "done", "turn": "emergency"})
 
-        return StreamingResponse(_emg_stream(), media_type="text/event-stream")
+        return StreamingResponse(_trace_stream(trace_id, _emg_stream()), media_type="text/event-stream")
 
     # 闸门 2：知情同意 —— 仅患者；未签当前版本同意书则拦截，强制先同意
     if user.get("role") == "patient" and not _has_consent(sub):
@@ -1034,13 +1081,15 @@ async def chat(
                 "consent_gate",
                 False,
                 start,
+                status="gate",
+                tenant_id=tenant_id,
             )
             yield _event(
                 {"type": "consent_required", "detail": SCOPE_STATEMENT, "version": CONSENT_VERSION}
             )
             yield _event({"type": "done", "turn": "consent"})
 
-        return StreamingResponse(_consent_stream(), media_type="text/event-stream")
+        return StreamingResponse(_trace_stream(trace_id, _consent_stream()), media_type="text/event-stream")
 
     # 闸门 3：定位违规 —— 诊断/开处方请求，固定回复「不诊断不开方」
     scope = assess_scope_violation(message)
@@ -1058,12 +1107,14 @@ async def chat(
                 "scope_gate",
                 False,
                 start,
+                status="gate",
+                tenant_id=tenant_id,
             )
             yield _event({"type": "scope", "text": scope.response})
             yield _event({"type": "disclaimer", "text": DISCLAIMER_TEXT})
             yield _event({"type": "done", "turn": "scope"})
 
-        return StreamingResponse(_scope_stream(), media_type="text/event-stream")
+        return StreamingResponse(_trace_stream(trace_id, _scope_stream()), media_type="text/event-stream")
 
     # metadata.trace_id 会透传到 LangSmith run，便于在链路追踪平台回放完整执行流程
     config = {"configurable": {"thread_id": thread_id}, "metadata": {"trace_id": trace_id}}
@@ -1081,8 +1132,20 @@ async def chat(
         out_buf = ""  # 待检测的发送缓冲（句级冲刷，兼顾流式体验与输出安全）
         blocked = False  # 输出护栏是否已触发
 
-        def _persist(turn: str, tool_used: str, fallback: bool) -> str:
-            """落库本轮对话审计记录（ChatLog），任何异常都不应影响主流程。"""
+        def _persist(
+            turn: str, tool_used: str, fallback: bool, status: str = "ok", error: str = ""
+        ) -> str:
+            """落库本轮对话审计记录（ChatLog），任何异常都不应影响主流程。
+
+            本轮 token 与生效 prompt 版本从 graph 最终 state 读取——
+            ``token_usage`` 由各节点上报、LangGraph reducer 累加，
+            比进程内 contextvar 可靠（节点可能跑在独立异步任务里）。
+            """
+            _usage = {}
+            _pver = ""
+            if isinstance(final_state, dict):
+                _usage = final_state.get("token_usage") or {}
+                _pver = final_state.get("prompt_version") or ""
             record_chat_log(
                 trace_id,
                 user["sub"],
@@ -1093,6 +1156,12 @@ async def chat(
                 tool_used,
                 fallback,
                 start,
+                prompt_version=_pver,
+                tenant_id=tenant_id,
+                status=status,
+                error=error,
+                prompt_tokens=int(_usage.get("prompt", 0)),
+                completion_tokens=int(_usage.get("completion", 0)),
             )
             # intent 优先取图执行后的真实结果（真实 LLM 分类），回退到关键词猜测
             intent = "unknown"
@@ -1162,7 +1231,18 @@ async def chat(
                     },
                 )
                 yield _event({"type": "error", "text": timeout_msg})
-                yield _event({"type": "done", "turn": _persist("system", "timeout", True)})
+                yield _event(
+                    {
+                        "type": "done",
+                        "turn": _persist(
+                            "system",
+                            "timeout",
+                            True,
+                            status="timeout",
+                            error=f"超过 CHAT_TIMEOUT_SECONDS={CHAT_TIMEOUT_SECONDS}s 未产出生效 token",
+                        ),
+                    }
+                )
                 return
             if ev.get("event") == "on_chat_model_stream":
                 # 仅推送 final_answer 节点的 token；子 Agent 内部推理不暴露给患者端
@@ -1187,6 +1267,17 @@ async def chat(
                 if node == "final_answer":
                     final_state = ev.get("data", {}).get("output")
 
+        # 取**累加后**的完整 state，覆盖上面「最后一个节点的增量输出」。
+        # 原因：astream_events 里 on_chain_end 的 output 只是该节点返回的 delta，
+        # 不含 supervisor / agent 节点此前上报的 token_usage 与 prompt_version。
+        # 直接用它落审计，本轮 token 会恒为 0——指标看起来正常，数据其实是错的。
+        try:
+            _snap = await graph.aget_state(config)
+            if _snap is not None and getattr(_snap, "values", None):
+                final_state = _snap.values
+        except Exception:  # noqa: BLE001
+            pass  # 取不到就沿用节点增量输出，审计仍要写，只是 token 可能不全
+
         # 冲刷残留缓冲（同样必须过护栏，避免尾部内容绕过检测）
         if out_buf and not blocked:
             piece, out_buf = out_buf, ""
@@ -1202,7 +1293,12 @@ async def chat(
             aid = get_store().create(thread_id, interrupt_value)
             collected.append(json.dumps(interrupt_value, ensure_ascii=False))
             yield _event({"type": "interrupt", "approval_id": aid, "payload": interrupt_value})
-            yield _event({"type": "done", "turn": _persist("human", "human_approval", False)})
+            yield _event(
+                {
+                    "type": "done",
+                    "turn": _persist("human", "human_approval", False, status="pending"),
+                }
+            )
         elif not emitted_tokens and final_state:
             # 兜底：final_answer 绕过了 LLM 流式（如知识库直出），从状态中提取完整回复推送
             msgs = final_state.get("messages") or []
@@ -1222,11 +1318,20 @@ async def chat(
                             "ai" if not blocked else "system",
                             "knowledge_base" if not blocked else "guard_blocked",
                             False,
+                            status="guard" if blocked else "ok",
+                            error="输出侧护栏拦截" if blocked else "",
                         ),
                     }
                 )
             else:
-                yield _event({"type": "done", "turn": _persist("system", "fallback", True)})
+                yield _event(
+                    {
+                        "type": "done",
+                        "turn": _persist(
+                            "system", "fallback", True, status="degraded", error="无可用回复内容"
+                        ),
+                    }
+                )
         else:
             yield _event(
                 {
@@ -1235,6 +1340,10 @@ async def chat(
                         "ai" if emitted_tokens else "system",
                         "llm" if emitted_tokens else "fallback",
                         not emitted_tokens,
+                        status="guard"
+                        if blocked
+                        else ("degraded" if not emitted_tokens else "ok"),
+                        error="输出侧护栏拦截" if blocked else "",
                     ),
                 }
             )
@@ -1252,7 +1361,7 @@ async def chat(
             async for ev in _gen_impl():
                 yield ev
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(_trace_stream(trace_id, gen()), media_type="text/event-stream")
 
 
 # ---------------- 知情同意（Tier-0 法律责任红线） ----------------
@@ -1408,18 +1517,54 @@ def _msg_text(c):
     return str(c)
 
 
+def _chat_log_row(r, include_text: bool = True) -> dict:
+    """审计记录序列化（医护视角）。
+
+    新增字段回答三个此前答不了的问题：
+    ``model`` / ``prompt_version`` → 这轮用的是哪个模型、哪个 prompt 版本（灰度定位）；
+    ``status`` / ``error``         → 是正常完成、超时、护栏拦截还是降级；
+    ``prompt_tokens`` / ``completion_tokens`` → 这一轮烧了多少 token。
+    """
+    row = {
+        "id": r.id,
+        "trace_id": r.trace_id,
+        "patient_id": r.patient_id,
+        "thread_id": r.thread_id,
+        "intent": r.intent,
+        "tool_used": r.tool_used,
+        "fallback": bool(r.fallback),
+        "latency_ms": r.latency_ms,
+        "model": r.model or "",
+        "prompt_version": r.prompt_version or "",
+        "tenant_id": r.tenant_id,
+        "status": r.status or "ok",
+        "error": r.error or "",
+        "prompt_tokens": r.prompt_tokens or 0,
+        "completion_tokens": r.completion_tokens or 0,
+        "total_tokens": (r.prompt_tokens or 0) + (r.completion_tokens or 0),
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+    }
+    if include_text:
+        row["input_text"] = mask_pii_text(r.input_text) if r.input_text else r.input_text
+        row["output_text"] = mask_pii_text(r.output_text) if r.output_text else r.output_text
+    return row
+
+
 @app.get("/api/chat-logs")
 async def chat_logs(
     patient_id: str = "",
     thread_id: str = "",
+    trace_id: str = "",
+    status: str = "",
     limit: int = 50,
     user: dict = Depends(require_doctor),
 ):
     """查看对话执行链路（审计回放）。仅医护可访问。
 
-    - 可按 patient_id / thread_id 过滤；按时间倒序返回最近 limit 条。
-    - 每条含 trace_id（关联 LangSmith 完整 LangGraph 链路）、intent、tool_used、
-      fallback 标志、latency_ms 与输入输出文本，支撑「可回滚查看执行流程」。
+    - 可按 patient_id / thread_id / **trace_id** / status 过滤；按时间倒序返回最近 limit 条。
+    - 每条含 trace_id（关联链路追踪平台完整 LangGraph 链路）、intent、tool_used、
+      fallback 标志、latency_ms、**生效模型与 prompt 版本**、**本轮 token**、
+      以及输入输出文本，支撑「可回滚查看执行流程」。
     """
     if not is_db_enabled():
         raise HTTPException(status_code=503, detail="审计库未启用（未配置 DATABASE_URL）")
@@ -1432,26 +1577,54 @@ async def chat_logs(
             q = q.filter(ChatLog.patient_id == patient_id)
         if thread_id:
             q = q.filter(ChatLog.thread_id == thread_id)
+        if trace_id:
+            q = q.filter(ChatLog.trace_id == trace_id)
+        if status:
+            q = q.filter(ChatLog.status == status)
         rows = q.order_by(desc(ChatLog.created_at), desc(ChatLog.id)).limit(limit).all()
-        return {
-            "logs": [
-                {
-                    "id": r.id,
-                    "trace_id": r.trace_id,
-                    "patient_id": r.patient_id,
-                    "thread_id": r.thread_id,
-                    "intent": r.intent,
-                    "tool_used": r.tool_used,
-                    "fallback": bool(r.fallback),
-                    "latency_ms": r.latency_ms,
-                    # 数据脱敏：展示层再次脱敏（幂等），覆盖历史未脱敏记录
-                    "input_text": mask_pii_text(r.input_text) if r.input_text else r.input_text,
-                    "output_text": mask_pii_text(r.output_text) if r.output_text else r.output_text,
-                    "created_at": r.created_at.isoformat() if r.created_at else None,
-                }
-                for r in rows
-            ]
-        }
+        return {"logs": [_chat_log_row(r) for r in rows]}
+
+
+@app.get("/api/trace/{trace_id}")
+async def trace_lookup(trace_id: str, user: dict = Depends(require_doctor)):
+    """按「问题编号」直达该轮完整审计记录（医护/客服排障入口）。
+
+    为什么需要这个端点
+    ------------------
+    trace_id 已下发给客户端（SSE meta 事件，前端展示为「问题编号」），
+    但此前没有按它查询的接口——运维拿到 ID 后仍只能靠 patient/thread 翻列表。
+    本端点让「患者报障 → 提供问题编号 → 运维直达该轮全量上下文」成为一条直线。
+
+    返回该 trace 下的全部记录（正常一轮一条；中断重试等场景可能多条），
+    以及聚合后的本轮 token 与耗时，便于直接判断慢在哪、烧了多少。
+    """
+    if not is_db_enabled():
+        raise HTTPException(status_code=503, detail="审计库未启用（未配置 DATABASE_URL）")
+    # trace_id 是十六进制串，做白名单校验避免无谓的模糊查询
+    if not trace_id or len(trace_id) > 64:
+        raise HTTPException(status_code=400, detail="trace_id 非法")
+    from sqlalchemy import asc
+
+    with get_session() as s:
+        rows = (
+            s.query(ChatLog)
+            .filter(ChatLog.trace_id == trace_id)
+            .order_by(asc(ChatLog.created_at), asc(ChatLog.id))
+            .all()
+        )
+    if not rows:
+        raise HTTPException(status_code=404, detail="未找到该问题编号对应的记录")
+    return {
+        "trace_id": trace_id,
+        # W3C 32 位格式：可直接粘进 Jaeger / Grafana Tempo 定位完整调用链
+        "otel_trace_id": hex_to_trace_id(trace_id),
+        "records": [_chat_log_row(r) for r in rows],
+        "totals": {
+            "prompt_tokens": sum(r.prompt_tokens or 0 for r in rows),
+            "completion_tokens": sum(r.completion_tokens or 0 for r in rows),
+            "latency_ms": sum(r.latency_ms or 0 for r in rows),
+        },
+    }
 
 
 @app.get("/health")
@@ -1560,12 +1733,15 @@ async def breaker_reset(req: Request):
 async def llm_cost(req: Request, reset: bool = False):
     """LLM 成本归因快照：按患者 / Agent / 模型三维聚合 token 与估算费用。需 X-Admin-Key。
 
-    查询参数 ``?reset=1`` 清空进程内分账 ledger（演示复位用，不影响 Prometheus TSDB 累计）。
-    返回结构见 ``src/cost.cost_breakdown``：总量 + by_patient / by_agent / by_model 明细。
+    查询参数 ``?reset=1`` 清空进程内分账 ledger **与当日预算计数器**
+    （运维在确认误触熔断后手动解除；不影响 Prometheus TSDB 累计）。
+    返回结构见 ``src/cost.cost_breakdown``：总量 + by_patient / by_agent / by_model
+    + ``budget`` 预算使用情况（含是否已触发熔断）。
     """
     _require_admin_key(req)
     if reset:
         reset_ledger()
+        reset_budget()
     return cost_breakdown()
 
 

@@ -116,8 +116,8 @@
 
 <div class="grid g4" style="margin-bottom:22px">
   <div class="card"><div class="k">后端代码</div><div class="v">11,338</div><div class="n">44 个 Python 模块</div></div>
-  <div class="card"><div class="k">测试</div><div class="v" style="color:var(--green)">185 / 198</div><div class="n">20 个套件，13 项 sqlite 跳过，Postgres 全绿</div></div>
-  <div class="card"><div class="k">API 端点</div><div class="v">54</div><div class="n">49 条路径 · 患者 / 医护 / 管理三类</div></div>
+  <div class="card"><div class="k">测试</div><div class="v" style="color:var(--green)">200 / 214</div><div class="n">21 个套件，14 项 sqlite 跳过，Postgres 全绿</div></div>
+  <div class="card"><div class="k">API 端点</div><div class="v">55</div><div class="n">50 条路径 · 患者 / 医护 / 管理三类</div></div>
   <div class="card"><div class="k">数据库</div><div class="v">18 + 4 表</div><div class="n">主库业务表 + checkpointer + 每患者 SQLite</div></div>
 </div>
 
@@ -135,7 +135,7 @@
   <a href="#ch3f">交付运维</a>
   <a href="#ch3g">前端与工程</a>
   <a href="#ch4">④ 关键设计决策</a>
-  <a href="#ch5">⑤ 面试问答 40 题</a>
+  <a href="#ch5">⑤ 面试问答 42 题</a>
   <a href="#ch6">⑥ 数字总览与诚实边界</a>
 </div>
 
@@ -186,8 +186,8 @@
   <tr><th style="width:22%">目录</th><th>内容</th></tr>
   <tr><td><code>src/</code></td><td>44 个 Python 模块 / 11,338 行：网关 / 编排 / 工具 / 护栏 / 韧性 / 数据 / 观测</td></tr>
   <tr><td><code>src/tools/</code></td><td>5 个 Agent 工具命名空间（<code>triage</code> <code>intake</code> <code>booking</code> <code>followup</code> <code>emergency</code>）+ <code>record</code> 写入工具模块（并入 triage / intake）</td></tr>
-  <tr><td><code>tests/</code></td><td>20 个套件 / 198 项用例（Postgres 全绿）</td></tr>
-  <tr><td><code>alembic/</code></td><td>14 个迁移版本（单一来源，CI 查漂移）</td></tr>
+  <tr><td><code>tests/</code></td><td>21 个套件 / 214 项用例（Postgres 全绿）</td></tr>
+  <tr><td><code>alembic/</code></td><td>15 个迁移版本（单一来源，CI 查漂移）</td></tr>
   <tr><td><code>observability/</code></td><td>Prometheus 9 条告警 + Grafana + Alertmanager + 本地告警接收端</td></tr>
   <tr><td><code>charts/</code></td><td>Helm 9 个模板文件（7 个 K8s 清单 + NOTES + helpers）+ 3 套环境 values</td></tr>
   <tr><td><code>deploy/gitops/</code></td><td>ArgoCD Application（拉模式）</td></tr>
@@ -513,6 +513,61 @@
   </dl></div>
 </div>
 
+<div class="tech">
+  <div class="hd"><span class="name">可追溯性：trace_id 从服务端贯通到客户端</span><span class="pill p-accent">排障</span><span class="pill p-green">面试亮点</span></div>
+  <div class="bd"><dl>
+    <dt>它解决什么问题</dt>
+    <dd>「患者投诉 AI 答错了」这类问题，靠时间戳和用户名翻日志是不可行的——
+        <strong>排障的起点必须是一个唯一可定位的 ID</strong>。</dd>
+    <dt>本项目的做法（三层贯通）</dt>
+    <dd>
+      <ol>
+        <li><strong>服务端贯通</strong>：入口 <code>new_trace_id()</code> → 贯穿 <code>chat.start</code>/<code>chat.done</code>/<code>chat.timeout</code>/护栏拦截/安全闸命中全部日志；
+            <code>hex_to_trace_id()</code> 补成 <strong>32 位 W3C 格式</strong>，日志可直接粘进 Jaeger / Tempo 定位完整调用链。</li>
+        <li><strong>审计落库</strong>：<code>chat_logs</code> 记录 trace_id + <strong>生效模型</strong> + <strong>prompt 版本</strong> + 租户 + <strong>本轮 token</strong> + <code>status</code>（ok / timeout / guard / gate / degraded / pending）+ 错误原因。</li>
+        <li><strong>下发客户端</strong>：SSE 首帧 <code>meta</code> 事件把 trace_id 推给前端，展示为「问题编号」并支持一键复制；运维用 <code>GET /api/trace/{trace_id}</code> 直达该轮全量记录。</li>
+      </ol>
+    </dd>
+    <dt>⚠️ 踩过的坑（两个都值得讲）</dt>
+    <dd>
+      ① <strong>节点增量输出 ≠ 累加后的 state</strong>：<code>astream_events</code> 里 <code>on_chain_end</code> 的 <code>output</code>
+      只是该节点返回的 delta，不含上游节点上报的 <code>token_usage</code>。直接拿它落审计，
+      <strong>本轮 token 恒为 0——指标看起来正常，数据其实是错的</strong>。改用 <code>graph.aget_state()</code> 取状态快照。<br>
+      ② <strong>token 累计不能用 contextvar</strong>：LangGraph 节点可能跑在独立异步任务里，contextvar 不继承，
+      子 Agent 那一跳会直接丢失。改为走 state + reducer（<code>add_usage</code>）由框架负责合并。
+    </dd>
+    <dt>💬 面试怎么答</dt>
+    <dd><span class="key">"可追溯不是加个日志就算数。我把 trace_id 贯通了三层：服务端日志、审计库、还有客户端——患者看到的每条回复下方都有『问题编号』，报障时直接给我这个号，我一条命令就能拉出那轮用的模型、prompt 版本、token 和完整输入输出。"</span></dd>
+  </dl></div>
+</div>
+
+<div class="tech">
+  <div class="hd"><span class="name">成本治理：token 归因 + 预算熔断</span><span class="pill p-red">成本</span><span class="pill p-green">面试亮点</span></div>
+  <div class="bd"><dl>
+    <dt>它解决什么问题</dt>
+    <dd>医疗场景里老板只关心两个数字：<strong>幻觉率</strong>和<strong>成本</strong>。
+        成本不仅要能算出来，还要能在失控时<strong>自动止损</strong>——Agent 一个死循环就能烧掉一天预算。</dd>
+    <dt>归因（算得清）</dt>
+    <dd>真实 usage 优先（<code>AIMessage.usage_metadata</code>，兼容 <code>input_/prompt_</code> 两种命名），取不到则按 CJK 1字≈1token / 拉丁 1.3 估算。
+        双写：Prometheus（低基数 agent+model+kind，长期趋势）+ 内存 ledger（patient 三维，即时明细）。
+        <strong>每轮 token 同步落 <code>chat_logs</code></strong>，可按轮次核算。</dd>
+    <dt>熔断（停得住）</dt>
+    <dd>调用 LLM <strong>之前</strong>做预检，当日累计已用 ≥ 预算即抛 <code>BudgetExceeded</code>，
+        调用方转安全降级——<strong>目的为止损，不是报错</strong>。支持全局与单患者两级预算，
+        单患者超限<strong>不连坐</strong>其他患者。触发后打 <code>medical_agent_llm_budget_blocks</code> 指标。</dd>
+    <dt>为什么是「累计额卡口」而不是「预扣」</dt>
+    <dd>单次调用会烧多少 token 无法预知，按累计额卡口是自托管与云 API 的通用做法；
+        代价是可能略微超支，但换来的是零依赖、易理解的简单实现。</dd>
+    <dt>⚠️ 踩过的坑</dt>
+    <dd><strong>supervisor 意图分类漏记 token</strong>：真实模型模式下它会真实调用一次 LLM，
+        但早期只在子 Agent 与汇总节点埋了点，导致<strong>每轮都少算一次分类调用</strong>，
+        成本看板上这部分完全隐形。已在 <code>classify_intent</code> 补埋点，并统一了返回键名
+        （两种模式下都返回 <code>{prompt_tokens, completion_tokens}</code>，避免调用方写两套取值逻辑）。</dd>
+    <dt>💬 面试怎么答</dt>
+    <dd><span class="key">"成本我不只做归因，还做了熔断：调用前预检当日累计用量，超预算就转降级话术而不是继续烧钱。而且我发现并修掉了一个漏记——意图分类那次 LLM 调用之前完全没算进成本，每轮都少算一笔。"</span></dd>
+  </dl></div>
+</div>
+
 <!-- ============ 交付运维 ============ -->
 <h3 id="ch3f">3.F 交付与运维</h3>
 
@@ -642,7 +697,7 @@
 </table>
 
 <!-- ============ 面试问答 ============ -->
-<h2 id="ch5">⑤ 面试问答 40 题</h2>
+<h2 id="ch5">⑤ 面试问答 42 题</h2>
 <p style="color:var(--ink-3);font-size:13px">点开看答案。建议先自己答，再对照——<strong>答不上来的说明还没真正理解，回去看第 3 章对应技术。</strong></p>
 
 <h3>A. 架构与选型（8 题）</h3>
@@ -941,6 +996,27 @@
   <span class="key">"我不只写备份脚本，还写了恢复演练脚本，并且真的跑过一次。事故时按脚本执行就行，而不是现场读文档猜命令。"</span>
 </div></details>
 
+<h3>I. 可追溯性与成本（2 题）</h3>
+
+<details><summary>Q41. 患者投诉「AI 刚才答错了」，你怎么定位？</summary>
+<div class="ans">
+  <p>靠时间戳和用户名翻日志是不可行的——排障的起点必须是<strong>唯一可定位的 ID</strong>。我的做法是把 trace_id 贯通三层：</p>
+  <p>① <strong>服务端</strong>：入口生成 trace_id，贯穿全部结构化日志；并转成 32 位 W3C 格式，可直接粘进 Jaeger / Tempo 看完整调用链。</p>
+  <p>② <strong>审计库</strong>：<code>chat_logs</code> 记录这轮用的<strong>哪个模型</strong>、<strong>哪个 prompt 版本</strong>、所属租户、<strong>本轮 token</strong>、结果状态（ok / timeout / guard / gate / degraded）与错误原因。</p>
+  <p>③ <strong>客户端</strong>：SSE 首帧 <code>meta</code> 事件把 trace_id 下发给前端，展示成「问题编号」可一键复制。运维 <code>GET /api/trace/{trace_id}</code> 一条命令直达。</p>
+  <p>「prompt 版本」这一列尤其关键：<strong>灰度发布后出问题的往往正是 v2，没有这列你根本判断不了是哪个版本的锅。</strong></p>
+  <span class="key">"可追溯不是加个日志就算数。患者看到的每条回复下方都有『问题编号』——给我这个号，我能立刻拉出那轮的模型、prompt 版本、token 和完整输入输出。"</span>
+</div></details>
+
+<details><summary>Q42. 怎么防止 Agent 失控循环把预算烧穿？</summary>
+<div class="ans">
+  <p>两层：先<strong>算得清</strong>，再<strong>停得住</strong>。</p>
+  <p><strong>归因</strong>：真实 usage 优先，取不到按字符估算；双写 Prometheus（低基数维度做趋势告警）与进程内 ledger（含患者维度做即时明细）；每轮 token 同步落审计表，可按需核算。</p>
+  <p><strong>熔断</strong>：调用 LLM <strong>之前</strong>预检当日累计用量，≥ 预算就抛 <code>BudgetExceeded</code>，调用方转安全降级话术。支持全局与单患者两级，单患者超限不连坐其他人。触发后打指标告警。</p>
+  <p><strong>已知边界要主动说</strong>：预算计数器是进程内的，多 worker 不共享、重启清零；生产若要严格全局限流应换 Redis 原子计数。</p>
+  <span class="key">"熔断不只是在故障时用，成本也要有熔断。而且我发现过一个真 bug：意图分类那次 LLM 调用之前完全没算进成本，每轮都少算一笔——这种漏记会让所有成本决策都建立在错误数据上。"</span>
+</div></details>
+
 <!-- ============ 数字总览 ============ -->
 <h2 id="ch6">⑥ 数字总览与诚实边界</h2>
 
@@ -948,12 +1024,12 @@
   <div class="card"><div class="k">压测 30 并发</div><div class="v">83 RPS</div><div class="n">p50 270ms / p95 500ms / 0 失败</div></div>
   <div class="card"><div class="k">幻觉率</div><div class="v">0%</div><div class="n">本地 1.5b 拒答 66.7% <span style="color:var(--red)">·</span> deepseek 100%</div></div>
   <div class="card"><div class="k">离线评测</div><div class="v">5/5 · 5/5 · 6/6</div><div class="n">红线 / 意图 / 端到端</div></div>
-  <div class="card"><div class="k">工程门禁</div><div class="v" style="color:var(--green)">全绿</div><div class="n">198 测试 · ruff 87 文件 · 14 迁移零漂移</div></div>
+  <div class="card"><div class="k">工程门禁</div><div class="v" style="color:var(--green)">全绿</div><div class="n">214 测试 · ruff 87 文件 · 15 迁移零漂移</div></div>
 </div>
 
 <h3>它是 / 它不是</h3>
 <table>
-  <tr><td style="width:50%;border-right:1px solid var(--line-2)"><strong style="color:var(--green)">✓ 它是</strong>：按企业级标准实现的个人项目。14 个迁移版本零漂移、198 项测试（含 22 项越权 PoC）、三层数据架构、完整可观测闭环、Helm + CD/GitOps、真实模型质量基线、prompt 版本管理 + 灰度发布 + 备份恢复演练。</td>
+  <tr><td style="width:50%;border-right:1px solid var(--line-2)"><strong style="color:var(--green)">✓ 它是</strong>：按企业级标准实现的个人项目。15 个迁移版本零漂移、214 项测试（含 22 项越权 PoC）、三层数据架构、完整可观测闭环、Helm + CD/GitOps、真实模型质量基线、prompt 版本管理 + 灰度发布 + 备份恢复演练。</td>
   <td><strong style="color:var(--amber)">✗ 它不是</strong>：跑过生产流量的系统。缺真实流量与医院数据、团队流程、on-call 记录、事故复盘、临床验证。<strong>这些任何个人项目都没有，硬编反而露馅。</strong></td></tr>
 </table>
 
@@ -965,7 +1041,7 @@
 </table>
 
 <footer>
-  本文件基于 2026-08-30 对 <code>/Users/mac/Documents/Medical-care</code> 的实测与代码通读生成。所有数字均为实测值（Postgres 198 测试全绿、真实模型幻觉率评测、30 并发压测基线），非估算。<br>
+  本文件基于 2026-08-30 对 <code>/Users/mac/Documents/Medical-care</code> 的实测与代码通读生成。所有数字均为实测值（Postgres 214 测试全绿、真实模型幻觉率评测、30 并发压测基线），非估算。<br>
   配套：<a href="docs/PROJECT_OVERVIEW.md">项目总览</a> · <a href="docs/RUNBOOK.md">运维处置手册</a> · <a href="企业级体检报告.html">企业级体检报告</a> · <a href="docs/DATA_COMPLIANCE.md">数据合规</a> · <a href="docs/MULTI_TENANT.md">多租户设计</a> · <a href="docs/DEPLOY_IAC.md">部署 IaC</a>
 </footer>
 

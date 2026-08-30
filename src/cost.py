@@ -31,10 +31,11 @@ import math
 import re
 import threading
 from collections import defaultdict
+from datetime import datetime, timezone
 from typing import Iterable, Optional
 
 from . import config
-from .metrics import LLM_COST_USD, LLM_TOKENS
+from .metrics import LLM_BUDGET_BLOCKS, LLM_COST_USD, LLM_TOKENS
 
 # ── 内存分账 ledger ──
 # 结构：_LEDGER[(patient, agent, model)] = {"prompt": int, "completion": int, "cost_usd": float}
@@ -48,6 +49,105 @@ _LEDGER: dict[tuple[str, str, str], dict[str, float]] = defaultdict(
 
 _CJK_RE = re.compile(r"[㐀-鿿]")
 _LATIN_RE = re.compile(r"[A-Za-z0-9]+")
+
+
+class BudgetExceeded(Exception):
+    """token 预算已耗尽，本次 LLM 调用被拒绝。
+
+    调用方必须**转安全降级**而不是继续调用：目的是止损，不是报错。
+    """
+
+    def __init__(self, scope: str, limit: int, used: int) -> None:
+        self.scope = scope
+        self.limit = limit
+        self.used = used
+        super().__init__(f"{scope} token 预算耗尽：已用 {used} / 上限 {limit}")
+
+
+# ── 当日预算计数器（进程内，跨 UTC 日界自动重置）──
+# 结构：{"date": "YYYY-MM-DD", "total": int, "by_patient": {pid: int}}
+# 与 _LEDGER 同样是进程内状态：多 worker 不共享、重启清零——这是已知边界。
+# 生产若需严格全局限流，应改用 Redis 计数器（原子 INCRBY + 过期键）。
+_BUDGET_LOCK = threading.Lock()
+_BUDGET: dict = {"date": "", "total": 0, "by_patient": defaultdict(int)}
+
+
+def _today() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def _budget_rollover() -> None:
+    """跨日重置计数器（惰性，在每次读写前调用）。"""
+    today = _today()
+    if _BUDGET["date"] != today:
+        _BUDGET["date"] = today
+        _BUDGET["total"] = 0
+        _BUDGET["by_patient"] = defaultdict(int)
+
+
+def check_budget(patient_id: str = "anonymous") -> None:
+    """调用 LLM **之前**的预检：超预算即抛 :class:`BudgetExceeded`。
+
+    判定口径是「当日累计已用 >= 预算」。无法预知单次调用会烧多少 token，
+    所以按累计额卡口——这是自托管与云 API 都通用的做法。
+    预算为 0 表示不限制（默认），便于本地开发与演示。
+    """
+    global_limit = config.LLM_DAILY_TOKEN_BUDGET
+    patient_limit = config.LLM_PER_PATIENT_DAILY_TOKEN_BUDGET
+    if not global_limit and not patient_limit:
+        return
+    with _BUDGET_LOCK:
+        _budget_rollover()
+        used_total = _BUDGET["total"]
+        used_patient = _BUDGET["by_patient"].get(patient_id or "anonymous", 0)
+    if global_limit and used_total >= global_limit:
+        LLM_BUDGET_BLOCKS.labels(scope="global").inc()
+        raise BudgetExceeded("全局单日", global_limit, used_total)
+    if patient_limit and used_patient >= patient_limit:
+        LLM_BUDGET_BLOCKS.labels(scope="patient").inc()
+        raise BudgetExceeded(f"患者 {patient_id} 单日", patient_limit, used_patient)
+
+
+def budget_status() -> dict:
+    """返回当前预算使用情况（供 /api/admin/cost 与运维排查）。"""
+    with _BUDGET_LOCK:
+        _budget_rollover()
+        by_patient = dict(_BUDGET["by_patient"])
+        return {
+            "date": _BUDGET["date"],
+            "global": {
+                "limit": config.LLM_DAILY_TOKEN_BUDGET,
+                "used": _BUDGET["total"],
+                "exceeded": bool(
+                    config.LLM_DAILY_TOKEN_BUDGET
+                    and _BUDGET["total"] >= config.LLM_DAILY_TOKEN_BUDGET
+                ),
+            },
+            "per_patient_limit": config.LLM_PER_PATIENT_DAILY_TOKEN_BUDGET,
+            "top_patients": sorted(
+                (
+                    {
+                        "patient": k,
+                        "used": v,
+                        "exceeded": bool(
+                            config.LLM_PER_PATIENT_DAILY_TOKEN_BUDGET
+                            and v >= config.LLM_PER_PATIENT_DAILY_TOKEN_BUDGET
+                        ),
+                    }
+                    for k, v in by_patient.items()
+                ),
+                key=lambda x: x["used"],
+                reverse=True,
+            )[:10],
+        }
+
+
+def reset_budget() -> None:
+    """清空预算计数器（测试隔离 / 运维手动解除熔断）。"""
+    with _BUDGET_LOCK:
+        _BUDGET["date"] = _today()
+        _BUDGET["total"] = 0
+        _BUDGET["by_patient"] = defaultdict(int)
 
 
 def estimate_tokens(text: str) -> int:
@@ -126,6 +226,12 @@ def record_llm_tokens(
     LLM_TOKENS.labels(agent=agent, model=model, kind="prompt").inc(prompt_tokens)
     LLM_TOKENS.labels(agent=agent, model=model, kind="completion").inc(completion_tokens)
 
+    # 当日预算累计（供 check_budget 预检卡口）
+    with _BUDGET_LOCK:
+        _budget_rollover()
+        _BUDGET["total"] += prompt_tokens + completion_tokens
+        _BUDGET["by_patient"][patient_id or "anonymous"] += prompt_tokens + completion_tokens
+
     price = _price_of(model)
     cost_usd = (
         prompt_tokens / 1000 * price["prompt"] + completion_tokens / 1000 * price["completion"]
@@ -177,7 +283,8 @@ def cost_breakdown() -> dict:
     return {
         "model": config.LLM_MODEL_NAME,
         "tracking_enabled": config.COST_TRACKING_ENABLED,
-        "note": "patient 维度为进程内分账（重启/多 worker 清零）；agent/model 维度同步进 Prometheus TSDB。",
+        "budget": budget_status(),
+        "note": "patient 维度与预算计数为进程内分账（重启/多 worker 清零）；agent/model 维度同步进 Prometheus TSDB。",
         "totals": {
             "prompt_tokens": int(total_prompt),
             "completion_tokens": int(total_completion),

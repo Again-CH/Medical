@@ -171,6 +171,14 @@ LLM_COST_USD = Counter(
     ["agent", "model"],
     namespace=NAMESPACE,
 )
+# 成本熔断：预算耗尽后被拒绝的 LLM 调用数。
+# 突增说明可能有失控循环或滥用，是需要立即介入的运维信号（不是普通业务指标）。
+LLM_BUDGET_BLOCKS = Counter(
+    "llm_budget_blocks",
+    "因超出 token 预算被拒绝的 LLM 调用数",
+    ["scope"],
+    namespace=NAMESPACE,
+)
 
 
 @contextmanager

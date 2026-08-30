@@ -427,6 +427,62 @@ docker compose -f observability/docker-compose.yml logs -f alert-sink
 cat observability/alert-sink-data/alerts.jsonl
 ```
 
+### 4.9 按「问题编号」定位单轮对话
+
+患者/客服报障时，前端每条 AI 回复下方都展示了**问题编号**（即 `trace_id`，SSE 首帧 `meta` 事件下发）。
+拿到这个编号就能直达该轮全量上下文，不必再靠「大概几点 + 用户名」翻日志。
+
+```bash
+# ① 按问题编号查该轮完整审计记录（含模型 / prompt 版本 / token / 状态 / 输入输出）
+curl -fsS -H "Authorization: Bearer $DOCTOR_TOKEN" \
+  "$HOST/api/trace/<trace_id>" | jq
+
+# ② 返回里的 otel_trace_id 是 32 位 W3C 格式，可直接粘进 Jaeger / Grafana Tempo
+#    定位完整的 supervisor → agent → tool / llm 调用链
+
+# ③ 按患者 / 会话 / 状态批量筛（例如只看超时）
+curl -fsS -H "Authorization: Bearer $DOCTOR_TOKEN" \
+  "$HOST/api/chat-logs?patient_id=alice&limit=50" | jq '.logs[] | {trace_id,status,latency_ms}'
+
+curl -fsS -H "Authorization: Bearer $DOCTOR_TOKEN" \
+  "$HOST/api/chat-logs?status=timeout&limit=50" | jq '.logs[].trace_id'
+```
+
+**审计记录里 `status` 的含义**（排障时先看这一列）：
+
+| status | 含义 | 通常下一步 |
+|---|---|---|
+| `ok` | 正常完成 | — |
+| `timeout` | 超过 `CHAT_TIMEOUT_SECONDS` 未产出有效 token | 查 LLM 延迟 / 熔断（3.2 / 3.6） |
+| `guard` | 输出侧护栏拦截（模型说了诊断/处方/剂量） | 查护栏命中样本，评估是否需调 prompt |
+| `gate` | Tier-0 硬闸拦截（急症 / 定位违规 / 未签同意） | 正常行为，无需处理 |
+| `degraded` | 安全降级（依赖不可用或预算耗尽） | 查熔断 / kill switch / 成本预算 |
+| `pending` | 已挂起等待人工审批 | 查审批积压（3.5） |
+
+> **排查 prompt 灰度问题时必看 `prompt_version` 列**：出问题的往往正是灰度中的 v2，
+> 没有这一列你根本判断不了是哪个版本的锅。
+
+### 4.10 成本预算熔断与解除
+
+```bash
+# 查看消耗与预算状态（budget.exceeded=true 表示已触发熔断）
+curl -fsS -H "X-Admin-Key: $ADMIN_API_KEY" "$HOST/api/admin/cost" | jq '.budget'
+
+# 确认是误触（而非真的失控）后手动解除：清空当日预算计数器
+curl -fsS -H "X-Admin-Key: $ADMIN_API_KEY" "$HOST/api/admin/cost?reset=1" | jq '.budget'
+
+# 被拒绝的调用数（突增说明可能有失控循环或滥用）
+curl -fsS -H "X-Admin-Key: $ADMIN_API_KEY" "$HOST/metrics" | grep llm_budget_blocks
+```
+
+**配置**（`.env`，0 表示不限制）：
+
+- `LLM_DAILY_TOKEN_BUDGET` —— 全局单日 token 上限
+- `LLM_PER_PATIENT_DAILY_TOKEN_BUDGET` —— 单患者单日上限（**不连坐**其他患者）
+
+> ⚠️ 预算计数器是**进程内**的：多副本部署时各副本独立计数，重启清零。
+> 生产若需严格全局限流，应改用 Redis 原子计数（`INCRBY` + 过期键）。
+
 ---
 
 ## 5. 升级矩阵

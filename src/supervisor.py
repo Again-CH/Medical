@@ -1,6 +1,7 @@
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from .config import LLM_MODE
+from .config import LLM_MODE, LLM_MODEL_NAME
+from .cost import BudgetExceeded, check_budget, record_llm_tokens
 from .llm import FakeLLM, get_llm
 from .safety import assess_emergency, assess_scope_violation
 from .state_utils import last_human
@@ -40,26 +41,56 @@ def _keyword_intent(text: str) -> str:
     return "triage"
 
 
-async def classify_intent(text: str) -> str:
-    """意图分类：fake 模式用关键词；真实模型用 LLM 结构化分类，异常则回退关键词。"""
+async def classify_intent(text: str, patient_id: str = "anonymous") -> tuple[str, dict]:
+    """意图分类：fake 模式用关键词；真实模型用 LLM 结构化分类，异常则回退关键词。
+
+    返回 ``(intent, token_usage)``，其中 usage 恒为
+    ``{"prompt_tokens": int, "completion_tokens": int}``——**两种模式下键名必须一致**，
+    否则调用方要写两套取值逻辑，迟早漏掉一处。
+
+    token 埋点为什么必须在这里补
+    -----------------------------
+    真实模型模式下这里会真实调用一次 LLM，但早期版本只在子 Agent 与汇总节点埋了点，
+    导致**每轮对话都少算一次分类调用**——成本看板上这部分消耗完全隐形。
+    """
+    ZERO = {"prompt_tokens": 0, "completion_tokens": 0}
     if LLM_MODE == "fake":
-        return _keyword_intent(text)
+        return _keyword_intent(text), dict(ZERO)
 
     llm = get_llm()
     # get_llm 已因 Ollama 不可用回退到 FakeLLM → 直接走关键词兜底
     if isinstance(llm, FakeLLM):
-        return _keyword_intent(text)
+        return _keyword_intent(text), dict(ZERO)
+    # 成本熔断预检：预算耗尽时不再为「意图分类」单独调一次 LLM，
+    # 直接退化为确定性关键词分类（分类本身有零成本兜底，这正是它的价值）。
     try:
-        resp = await llm.ainvoke(
-            [SystemMessage(content=SYSTEM_CLASSIFY), HumanMessage(content=text)]
-        )
-        label = (getattr(resp, "content", "") or "").strip().lower()
-        for k in INTENT_LABELS:
-            if k in label:
-                return k
-        return "triage"
+        check_budget(patient_id)
+    except BudgetExceeded:
+        return _keyword_intent(text), dict(ZERO)
+
+    msgs = [SystemMessage(content=SYSTEM_CLASSIFY), HumanMessage(content=text)]
+    try:
+        resp = await llm.ainvoke(msgs)
     except Exception:
-        return _keyword_intent(text)
+        return _keyword_intent(text), dict(ZERO)
+
+    try:
+        usage = record_llm_tokens(
+            patient_id=patient_id,
+            agent="supervisor",
+            model=LLM_MODEL_NAME,
+            prompt_text=SYSTEM_CLASSIFY + text,
+            completion_text=getattr(resp, "content", "") or "",
+            message=resp,
+        )
+    except Exception:  # 成本埋点失败绝不影响主链路
+        usage = {"prompt_tokens": 0, "completion_tokens": 0}
+
+    label = (getattr(resp, "content", "") or "").strip().lower()
+    for k in INTENT_LABELS:
+        if k in label:
+            return k, usage
+    return "triage", usage
 
 
 async def supervisor(state):
@@ -67,19 +98,40 @@ async def supervisor(state):
 
     红线判定统一走 ``safety`` 的确定性闸门（与网关入口**同一套词库**），
     不再经 ``redline`` 中间层，避免两套口径分叉导致「网关拦截、编排放行」。
+
+    token 用量经 state 上报（``token_usage``），由 LangGraph reducer 累加——
+    不用 contextvar 是因为节点可能跑在独立异步任务里，context 不会继承。
     """
     text = last_human(state)
     with span("supervisor.classify", {"msg_len": len(text or "")}):
-        return await _route(text)
+        return await _route(text, state.get("patient_id") or "anonymous")
 
 
-async def _route(text: str) -> dict:
+async def _route(text: str, patient_id: str = "anonymous") -> dict:
     emg = assess_emergency(text)
     if emg is not None:
         # 红线前置：写入 redline_reason 由 final_answer 组装急症提示。
         # 路由到 triage 而非 emergency agent——后者 token 会被网关过滤导致空响应。
-        return {"intent": "triage", "redline_reason": f"命中急症关键词：{emg.keyword}"}
+        return {
+            "intent": "triage",
+            "redline_reason": f"命中急症关键词：{emg.keyword}",
+            "token_usage": {"prompt": 0, "completion": 0},
+        }
     scope = assess_scope_violation(text)
     if scope is not None:
-        return {"intent": "triage", "redline_reason": f"违规请求：{scope.keyword}"}
-    return {"intent": await classify_intent(text)}
+        return {
+            "intent": "triage",
+            "redline_reason": f"违规请求：{scope.keyword}",
+            "token_usage": {"prompt": 0, "completion": 0},
+        }
+    intent, usage = await classify_intent(text, patient_id)
+    # 统一 state 契约：token_usage 恒用 prompt / completion 两个键（见 state.add_usage）。
+    # classify_intent 返回的是 record_llm_tokens 格式（*_tokens），此处做一次转换，
+    # 避免 reducer 拿到未知键而漏算。
+    return {
+        "intent": intent,
+        "token_usage": {
+            "prompt": int(usage.get("prompt_tokens", 0)),
+            "completion": int(usage.get("completion_tokens", 0)),
+        },
+    }

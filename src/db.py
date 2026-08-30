@@ -251,6 +251,18 @@ class ChatLog(Base):
     fallback = mapped_column(Boolean, default=False)  # 是否安全降级
     created_at = mapped_column(DateTime, default=utcnow)
 
+    # ---- 可追溯增强：回答「这一轮到底发生了什么」必须能查到的维度 ----
+    # 缺这几列时：灰度发布后判断不了「出问题的这轮用的是 v1 还是 v2 prompt」；
+    # 无法按轮次核算成本；也分不清「超时 / 护栏拦截 / 正常完成」——排查只能靠猜。
+    model = mapped_column(String(64), default="")  # 实际生效模型（成本与效果归因）
+    prompt_version = mapped_column(String(16), default="")  # 生效 prompt 版本（灰度可追溯）
+    # 刻意不加外键：审计记录不应被租户删除级联，也不该因 FK 约束而写不进去。
+    tenant_id = mapped_column(Integer, index=True, nullable=True)  # 院区归属
+    status = mapped_column(String(16), default="ok")  # ok / timeout / guard / error / gate
+    error = mapped_column(Text, default="")  # 失败原因（不含 PHI）
+    prompt_tokens = mapped_column(Integer, default=0)  # 本轮输入 token
+    completion_tokens = mapped_column(Integer, default=0)  # 本轮输出 token
+
 
 class Feedback(Base):
     """患者对某轮回答的评价（反馈驱动自我优化的输入）。

@@ -482,6 +482,24 @@ function appendDisclaimer(txtEl, text) {
   d.textContent = text;
 }
 
+// 问题编号（trace_id）展示：报障时患者可直接复制给客服/运维定位到具体那一轮
+function appendTraceId(txtEl, traceId) {
+  const bubble = txtEl && txtEl.parentElement;
+  if (!bubble || !traceId) return;
+  let t = bubble.querySelector(".trace-note");
+  if (!t) {
+    t = document.createElement("div");
+    t.className = "trace-note";
+    t.innerHTML =
+      '<span class="trace-label">问题编号</span>' +
+      '<code class="trace-id"></code>' +
+      '<button class="trace-copy" data-action="copy-trace" type="button">复制</button>';
+    bubble.appendChild(t);
+  }
+  t.querySelector(".trace-id").textContent = traceId;
+  t.querySelector(".trace-copy").setAttribute("data-trace", traceId);
+}
+
 // 硬闸专用气泡：紧急救助（红）/ 服务范围说明（琥珀）
 function addSpecialMsg(kind, who, text) {
   const m = document.createElement("div");
@@ -585,6 +603,7 @@ async function send() {
     const reader = resp.body.getReader();
     const dec = new TextDecoder();
     let buf = "", aid = null, done = null, payload = null, botEl = null, pendingDisclaimer = "";
+  let traceId = "";
     clearTyping();
     const curTitle = SERVICES[curSvc].title;
     function ensureBotBubble() {
@@ -601,7 +620,8 @@ async function send() {
         if (!blk.startsWith("data:")) continue;
         let p;
         try { p = JSON.parse(blk.slice(5)); } catch (e) { continue; }
-        if (p.type === "token") { ensureBotBubble().textContent += p.text; }
+        if (p.type === "meta") { traceId = p.trace_id || ""; }
+        else if (p.type === "token") { ensureBotBubble().textContent += p.text; }
         else if (p.type === "emergency") { botEl = addEmergencyMsg(p.text); if (pendingDisclaimer) { appendDisclaimer(botEl, pendingDisclaimer); pendingDisclaimer = ""; } done = "emergency"; }
         else if (p.type === "scope") { botEl = addScopeMsg(p.text); if (pendingDisclaimer) { appendDisclaimer(botEl, pendingDisclaimer); pendingDisclaimer = ""; } done = "scope"; }
         else if (p.type === "consent_required") { needConsent = true; showConsentModal(); done = "consent"; }
@@ -611,6 +631,8 @@ async function send() {
         $("chat").scrollTop = $("chat").scrollHeight;
       }
     }
+    // 流结束后把「问题编号」挂到本轮回复下方，方便患者报障时直接提供可定位 ID
+    if (botEl && traceId) appendTraceId(botEl, traceId);
     if (aid && payload) { showBanner({ ...payload, _aid: aid }); }
     else if (!botEl && done && done !== "consent" && done !== "emergency" && done !== "scope") { const b = addMsg("bot", curTitle, ""); if (pendingDisclaimer) appendDisclaimer(b, pendingDisclaimer); b.textContent = "已为您处理，请问还有其他需要吗？"; }
     // 挂号自动成功（无 interrupt）→ 显示绿色成功卡
@@ -693,6 +715,26 @@ registerActions({
   "logout": function () { logout(); },
   "send": function () { send(); },
   "submit-consent": function () { submitConsent(); },
+  "copy-trace": function (el) {
+    const id = el.getAttribute("data-trace") || "";
+    const done = function () {
+      const old = el.textContent;
+      el.textContent = "已复制";
+      setTimeout(function () { el.textContent = old; }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(id).then(done, done);
+    } else {
+      // 非安全上下文（http 且非 localhost）无 clipboard API，降级为选中文本
+      const ta = document.createElement("textarea");
+      ta.value = id;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); } catch (e) { /* 忽略：用户可手动选中 */ }
+      document.body.removeChild(ta);
+      done();
+    }
+  },
 });
 
 // 刷新后若本地存有账号 token，静默重登，避免每次刷新都要求重新输入密码

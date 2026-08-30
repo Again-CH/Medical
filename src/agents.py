@@ -21,7 +21,7 @@ from langgraph.types import interrupt
 from .compose import try_format_knowledge_reply
 from .config import LLM_MODEL_NAME
 from .context import patient_ctx, tenant_ctx, thread_ctx
-from .cost import record_llm_tokens
+from .cost import BudgetExceeded, check_budget, record_llm_tokens
 from .db import clear_pending, is_db_enabled, pop_pending, set_pending
 from .llm import FakeLLM, acompose, get_llm
 from .logging_config import get_logger
@@ -192,7 +192,7 @@ async def run_agent_with_tools(llm, tools, state, system, sensitive_tools, appro
     # （tool_result 为空，交给 final_answer 的 KB 命中 / 安全兜底），不向故障依赖发请求。
     if resilience_enabled() and KILL_SWITCH.is_disabled(f"agent:{state.get('intent')}"):
         log.warning("resilience.intent_disabled", extra={"intent": state.get("intent")})
-        return [], ""
+        return [], "", {"prompt": 0, "completion": 0}
 
     llm_bound = llm.bind_tools(tools)
     # 给 fake 模型提供上下文 hint，使其能确定性地选出本命名空间工具
@@ -217,7 +217,11 @@ async def run_agent_with_tools(llm, tools, state, system, sensitive_tools, appro
             )
         )
         if not (isinstance(decision, dict) and decision.get("approved")):
-            return [AIMessage(content="操作已被人工拒绝。")], "操作未获人工批准，已取消。"
+            return (
+                [AIMessage(content="操作已被人工拒绝。")],
+                "操作未获人工批准，已取消。",
+                {"prompt": 0, "completion": 0},
+            )
         ai_msg = AIMessage(content="", tool_calls=pending)
         tool_msgs = []
         parts = []
@@ -228,15 +232,25 @@ async def run_agent_with_tools(llm, tools, state, system, sensitive_tools, appro
             out = _invoke_tool(fn, c.get("args", {}))
             tool_msgs.append(ToolMessage(content=str(out), tool_call_id=c["id"]))
             parts.append(str(out))
-        return [ai_msg, *tool_msgs], "\n".join(parts)
+        # resume 重跑不重新调用 LLM，故本分支 token 计 0
+        return [ai_msg, *tool_msgs], "\n".join(parts), {"prompt": 0, "completion": 0}
 
     # —— 首次运行：LLM 选工具；敏感动作累积，工具轮结束后再统一审批 ——
     collected = []
     tool_result_parts = []
     pending_sensitive: list = []
+    usage = {"prompt": 0, "completion": 0}
     MAX_STEPS = 4
 
     for _ in range(MAX_STEPS):
+        # 成本熔断预检：预算耗尽时**不再发起** LLM 调用（目的是止损，不是报错）。
+        # 放在循环内每一步之前：即便某一步已超支，后续步骤也不会继续烧钱。
+        try:
+            check_budget(state.get("patient_id") or "anonymous")
+        except BudgetExceeded as e:
+            log.warning("cost.budget_exceeded", extra={"scope": e.scope, "detail": str(e)})
+            break
+
         # LLM 调用单独成 span：回答"慢是慢在模型还是工具"的关键依据
         with span("llm.invoke", {"model": type(llm_bound).__name__, "step": _}):
             if resilience_enabled():
@@ -256,7 +270,7 @@ async def run_agent_with_tools(llm, tools, state, system, sensitive_tools, appro
         # 成本归因：记录本次 LLM 调用的 token 消耗（真实 usage 优先，否则估算）。
         # 熔断器开启分支在上方已 break，不会到此处；此处 ai 必然来自一次成功调用。
         try:
-            record_llm_tokens(
+            _u = record_llm_tokens(
                 patient_id=state.get("patient_id") or "anonymous",
                 agent=state.get("intent") or "unknown",
                 model=LLM_MODEL_NAME,
@@ -264,6 +278,9 @@ async def run_agent_with_tools(llm, tools, state, system, sensitive_tools, appro
                 completion_text=getattr(ai, "content", "") or "",
                 message=ai,
             )
+            # 累加到本轮用量（走 state 上报，不依赖 contextvar）
+            usage["prompt"] += int(_u.get("prompt_tokens", 0))
+            usage["completion"] += int(_u.get("completion_tokens", 0))
         except Exception:  # 成本埋点失败绝不影响主链路
             pass
         collected.append(ai)
@@ -302,9 +319,9 @@ async def run_agent_with_tools(llm, tools, state, system, sensitive_tools, appro
         decision = interrupt(_approval_payload(approval_action, state, pending_sensitive))
         if not (isinstance(decision, dict) and decision.get("approved")):
             collected.append(AIMessage(content="操作已被人工拒绝。"))
-            return collected, "操作未获人工批准，已取消。"
+            return collected, "操作未获人工批准，已取消。", usage
 
-    return collected, "\n".join(tool_result_parts)
+    return collected, "\n".join(tool_result_parts), usage
 
 
 def _make_agent_node(intent: str):
@@ -340,7 +357,7 @@ def _make_agent_node(intent: str):
         )
 
         with span(f"agent.{intent}", {"intent": intent, "thread_id": tid, "prompt_version": prompt_version}):
-            collected, tool_result = await run_agent_with_tools(
+            collected, tool_result, usage = await run_agent_with_tools(
                 get_llm(),
                 tools,
                 state,
@@ -351,7 +368,13 @@ def _make_agent_node(intent: str):
         # 随访动作落库到长期记忆
         if intent == "followup":
             append_note(state["patient_id"], last_human(state))
-        return {"messages": collected, "tool_result": tool_result}
+        # prompt_version 回写 state，供审计记录回答「这轮用的是哪个版本」
+        return {
+            "messages": collected,
+            "tool_result": tool_result,
+            "token_usage": usage,
+            "prompt_version": prompt_version,
+        }
 
     node.__name__ = f"agent_{intent}"
     return node
@@ -391,7 +414,14 @@ async def final_answer(state):
             )
             direct = try_format_knowledge_reply(fake_tool_result, pid)
             if direct:
-                return {"messages": [AIMessage(content=f"【分诊建议】\n{direct}")]}
+                # 知识库直出未调用 LLM，本节点 token 计 0；
+                # prompt_version 沿用上游 agent 节点已写入的值（不能回写成空串，
+                # 否则灰度发布后审计里就查不到这轮用的是哪个版本）。
+                return {
+                    "messages": [AIMessage(content=f"【分诊建议】\n{direct}")],
+                    "token_usage": {"prompt": 0, "completion": 0},
+                    "prompt_version": state.get("prompt_version") or "",
+                }
 
     # 回复生成模块同样走灰度 prompt
     compose_version = resolve_version(
@@ -419,6 +449,25 @@ async def final_answer(state):
         "· 紧急情况请立即拨打 120\n"
         "您也可以稍后重试或联系人工客服。"
     )
+    # 成本熔断预检：预算耗尽时直接走降级，不再发起这次汇总调用。
+    # 与熔断（依赖故障）不同，这里是**主动止损**，提示语也要说清是限流而非故障。
+    _BUDGET_FALLBACK = (
+        "您好，今日智能服务用量已达上限，暂时无法为您生成个性化建议。\n"
+        "· 若症状轻微，可先休息观察，注意补充水分与规律作息\n"
+        "· 若症状持续或加重，请尽快前往医院相应科室就诊\n"
+        "· 紧急情况请立即拨打 120\n"
+        "给您带来不便，敬请谅解。"
+    )
+    try:
+        check_budget(pid)
+    except BudgetExceeded as e:
+        log.warning("cost.budget_exceeded", extra={"scope": e.scope, "detail": str(e)})
+        return {
+            "messages": [AIMessage(content=_BUDGET_FALLBACK)],
+            "token_usage": {"prompt": 0, "completion": 0},
+            "prompt_version": compose_version,
+        }
+
     try:
         # LLM 汇总同样走熔断器：依赖被隔离（OPEN）时快速失败，直接走统一安全降级，
         # 不再为每个请求打满超时。BreakerOpenError 属 Exception，下面的 except 统一兜底。
@@ -428,19 +477,34 @@ async def final_answer(state):
             text = await acompose(llm, msgs)
     except Exception as e:
         print(f"[final_answer] LLM 汇总失败（含熔断），启用统一安全降级: {e!r}")
-        return {"messages": [AIMessage(content=_SAFE_FALLBACK)]}
+        return {
+            "messages": [AIMessage(content=_SAFE_FALLBACK)],
+            "token_usage": {"prompt": 0, "completion": 0},
+            "prompt_version": compose_version,
+        }
     if not text or not text.strip():
         # 模型返回空（如限流/内容被过滤）：同样走安全降级
-        return {"messages": [AIMessage(content=_SAFE_FALLBACK)]}
+        return {
+            "messages": [AIMessage(content=_SAFE_FALLBACK)],
+            "token_usage": {"prompt": 0, "completion": 0},
+            "prompt_version": compose_version,
+        }
     # 成本归因：compose 汇总节点的一次 LLM 调用（真实 usage 优先，否则估算）
+    usage = {"prompt": 0, "completion": 0}
     try:
-        record_llm_tokens(
+        _u = record_llm_tokens(
             patient_id=pid,
             agent="compose",
             model=LLM_MODEL_NAME,
             prompt_text=_msgs_text(msgs),
             completion_text=text,
         )
+        usage["prompt"] += int(_u.get("prompt_tokens", 0))
+        usage["completion"] += int(_u.get("completion_tokens", 0))
     except Exception:  # 成本埋点失败绝不影响主链路
         pass
-    return {"messages": [AIMessage(content=text)]}
+    return {
+        "messages": [AIMessage(content=text)],
+        "token_usage": usage,
+        "prompt_version": compose_version,
+    }
