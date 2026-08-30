@@ -53,3 +53,7 @@ observability/alert-sink-data/
 # 生产 webhook 密钥文件（含机器人 key，绝不入库）
 observability/alertmanager/secrets/
 
+# 面试/诊断类 HTML：本地生成，不进入版本库
+企业级体检报告.html
+项目技术解读与面试问答.html
+
