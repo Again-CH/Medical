@@ -115,10 +115,10 @@
 </header>
 
 <div class="grid g4" style="margin-bottom:22px">
-  <div class="card"><div class="k">后端代码</div><div class="v">11,045</div><div class="n">42 个 Python 文件</div></div>
-  <div class="card"><div class="k">测试</div><div class="v" style="color:var(--green)">184 / 197</div><div class="n">20 个套件，13 项 sqlite 跳过，Postgres 全绿</div></div>
-  <div class="card"><div class="k">API 端点</div><div class="v">45</div><div class="n">患者 / 医护 / 管理三类</div></div>
-  <div class="card"><div class="k">数据库</div><div class="v">21 表</div><div class="n">主库 + 患者私有库 + 向量库</div></div>
+  <div class="card"><div class="k">后端代码</div><div class="v">11,338</div><div class="n">44 个 Python 模块</div></div>
+  <div class="card"><div class="k">测试</div><div class="v" style="color:var(--green)">185 / 198</div><div class="n">20 个套件，13 项 sqlite 跳过，Postgres 全绿</div></div>
+  <div class="card"><div class="k">API 端点</div><div class="v">54</div><div class="n">49 条路径 · 患者 / 医护 / 管理三类</div></div>
+  <div class="card"><div class="k">数据库</div><div class="v">18 + 4 表</div><div class="n">主库业务表 + checkpointer + 每患者 SQLite</div></div>
 </div>
 
 <div class="toc">
@@ -184,12 +184,12 @@
 <h3>1.3 目录结构</h3>
 <table>
   <tr><th style="width:22%">目录</th><th>内容</th></tr>
-  <tr><td><code>src/</code></td><td>42 个模块：网关 / 编排 / 工具 / 护栏 / 韧性 / 数据 / 观测</td></tr>
-  <tr><td><code>src/tools/</code></td><td>6 个工具命名空间：<code>triage</code> <code>intake</code> <code>booking</code> <code>followup</code> <code>record</code> <code>emergency</code></td></tr>
-  <tr><td><code>tests/</code></td><td>20 个套件 / 197 项用例</td></tr>
-  <tr><td><code>alembic/</code></td><td>11 个迁移版本（单一来源，CI 查漂移）</td></tr>
+  <tr><td><code>src/</code></td><td>44 个 Python 模块 / 11,338 行：网关 / 编排 / 工具 / 护栏 / 韧性 / 数据 / 观测</td></tr>
+  <tr><td><code>src/tools/</code></td><td>5 个 Agent 工具命名空间（<code>triage</code> <code>intake</code> <code>booking</code> <code>followup</code> <code>emergency</code>）+ <code>record</code> 写入工具模块（并入 triage / intake）</td></tr>
+  <tr><td><code>tests/</code></td><td>20 个套件 / 198 项用例（Postgres 全绿）</td></tr>
+  <tr><td><code>alembic/</code></td><td>14 个迁移版本（单一来源，CI 查漂移）</td></tr>
   <tr><td><code>observability/</code></td><td>Prometheus 9 条告警 + Grafana + Alertmanager + 本地告警接收端</td></tr>
-  <tr><td><code>charts/</code></td><td>Helm 13 个模板 + 3 套环境 values</td></tr>
+  <tr><td><code>charts/</code></td><td>Helm 9 个模板文件（7 个 K8s 清单 + NOTES + helpers）+ 3 套环境 values</td></tr>
   <tr><td><code>deploy/gitops/</code></td><td>ArgoCD Application（拉模式）</td></tr>
   <tr><td><code>client/</code></td><td>Vite 双入口 + <code>src/shared/</code> 共享模块 + Playwright E2E</td></tr>
   <tr><td><code>docs/</code></td><td>总览 / 运维手册 / 数据合规 / 多租户 / 部署 IaC</td></tr>
@@ -198,7 +198,7 @@
 <h2 id="ch2">② 技术栈全景</h2>
 <div class="flow"><pre>┌─ 接入层 ───── FastAPI · Pydantic · SSE · 严格 CSP · JWT ─────────┐
 ├─ 编排层 ───── LangGraph（StateGraph + interrupt + checkpointer）─┤
-├─ 工具层 ───── 6 个命名空间 · 按角色与租户隔离 ──────────────────┤
+├─ 工具层 ───── 5 个 Agent 命名空间 · 按角色与租户隔离 ───────────┤
 ├─ 护栏层 ───── 输入红线 · 输出护栏 · PHI 脱敏 · OLP ─────────────┤
 ├─ 韧性层 ───── 重试 · 熔断 · kill switch · 降级 ─────────────────┤
 ├─ 数据层 ───── PostgreSQL 18.6 · SQLAlchemy 2.0 · Alembic ───────┤
@@ -861,7 +861,7 @@
 
 <details><summary>Q31. 怎么部署？线上跑的是哪个版本？</summary>
 <div class="ans">
-  <p>Helm chart（13 个模板）+ 三套环境 values。CD 流程：镜像按 <strong>git SHA 打标</strong> → Trivy 扫高危阻断 → dev→staging→prod 推进，<strong>prod 走 GitHub Environment 强制人工审批</strong>。</p>
+  <p>Helm chart（7 个 K8s 清单模板）+ 三套环境 values。CD 流程：镜像按 <strong>git SHA 打标</strong> → Trivy 扫高危阻断 → dev→staging→prod 推进，<strong>prod 走 GitHub Environment 强制人工审批</strong>。</p>
   <p>用 SHA 而非 <code>latest</code> 的原因：<code>latest</code> 无法回答「<strong>线上跑的是哪个 commit</strong>」，出事时也没法精确定位回滚目标。</p>
   <p>三套环境差异明确：dev 用 fake 模型 + 随 chart PG；staging 接真模型 + masked 脱敏；<strong>prod 用本地 Ollama + strict，PHI 不出境</strong>。</p>
   <p>另附 ArgoCD <strong>拉模式</strong>声明——CI 不需要集群凭证，Git 是唯一事实源；<strong>prod 不开 automated</strong>，由人确认后 Sync。</p>
@@ -910,6 +910,8 @@
   <p>④ <strong>CI 用官方 postgres 镜像必失败</strong>——不带 pgvector 扩展，必须换 <code>pgvector/pgvector:pg16</code>。</p>
   <p>⑤ <strong>告警的 null receiver</strong>——栈能起但告警哪儿也去不了，"可观测"并没有变成"有人响应"。</p>
   <p>⑥ <strong>恢复脚本含 <code>--create</code> 导致目标库名冲突</strong>——<code>pg_dump --create</code> 会在 SQL 里写 CREATE DATABASE 原始库名，恢复演练到临时库时表没落到临时库。去掉 <code>--create</code> 后演练通过。</p>
+  <p>⑦ <strong>Postgres 序列不同步：全新库首次建院区必崩</strong>——迁移 <code>0b8ce330fa1c</code> 用裸 SQL <strong>显式插入 <code>id=1</code></strong> 的默认租户做存量兜底，而 <strong>SERIAL 序列不会被显式 id 推进</strong>。于是新库上「默认租户占了 id=1、序列还停在 1」，ORM 首次插入租户拿到 id=1 → <code>UniqueViolation</code>；<strong>再插一次才成功，看起来像偶发，实则是必现</strong>，且只在「新环境建库 / 灾备恢复」时爆炸。加后续迁移用 <code>setval</code> 对齐，并补护栏测试。</p>
+  <span class="key">"这个 bug 让我明白：alembic check 只比 schema，序列当前值属于数据状态，它查不出来；而且 SQLite 根本不复现——所以必须在全新 Postgres 库上跑一次全量回归，不能只信已有的开发库。"</span>
 </div></details>
 
 <h3>H. MLOps 与质量工程（4 题）</h3>
@@ -946,12 +948,12 @@
   <div class="card"><div class="k">压测 30 并发</div><div class="v">83 RPS</div><div class="n">p50 270ms / p95 500ms / 0 失败</div></div>
   <div class="card"><div class="k">幻觉率</div><div class="v">0%</div><div class="n">本地 1.5b 拒答 66.7% <span style="color:var(--red)">·</span> deepseek 100%</div></div>
   <div class="card"><div class="k">离线评测</div><div class="v">5/5 · 5/5 · 6/6</div><div class="n">红线 / 意图 / 端到端</div></div>
-  <div class="card"><div class="k">工程门禁</div><div class="v" style="color:var(--green)">全绿</div><div class="n">197 测试 · ruff 84 文件 · 零漂移</div></div>
+  <div class="card"><div class="k">工程门禁</div><div class="v" style="color:var(--green)">全绿</div><div class="n">198 测试 · ruff 87 文件 · 14 迁移零漂移</div></div>
 </div>
 
 <h3>它是 / 它不是</h3>
 <table>
-  <tr><td style="width:50%;border-right:1px solid var(--line-2)"><strong style="color:var(--green)">✓ 它是</strong>：按企业级标准实现的个人项目。11 个迁移版本零漂移、197 项测试（含 22 项越权 PoC）、三层数据架构、完整可观测闭环、Helm + CD/GitOps、真实模型质量基线、prompt 版本管理 + 灰度发布 + 备份恢复演练。</td>
+  <tr><td style="width:50%;border-right:1px solid var(--line-2)"><strong style="color:var(--green)">✓ 它是</strong>：按企业级标准实现的个人项目。14 个迁移版本零漂移、198 项测试（含 22 项越权 PoC）、三层数据架构、完整可观测闭环、Helm + CD/GitOps、真实模型质量基线、prompt 版本管理 + 灰度发布 + 备份恢复演练。</td>
   <td><strong style="color:var(--amber)">✗ 它不是</strong>：跑过生产流量的系统。缺真实流量与医院数据、团队流程、on-call 记录、事故复盘、临床验证。<strong>这些任何个人项目都没有，硬编反而露馅。</strong></td></tr>
 </table>
 
@@ -963,7 +965,7 @@
 </table>
 
 <footer>
-  本文件基于 2026-08-30 对 <code>/Users/mac/Documents/Medical-care</code> 的实测与代码通读生成。所有数字均为实测值（Postgres 197 测试全绿、真实模型幻觉率评测、30 并发压测基线），非估算。<br>
+  本文件基于 2026-08-30 对 <code>/Users/mac/Documents/Medical-care</code> 的实测与代码通读生成。所有数字均为实测值（Postgres 198 测试全绿、真实模型幻觉率评测、30 并发压测基线），非估算。<br>
   配套：<a href="docs/PROJECT_OVERVIEW.md">项目总览</a> · <a href="docs/RUNBOOK.md">运维处置手册</a> · <a href="企业级体检报告.html">企业级体检报告</a> · <a href="docs/DATA_COMPLIANCE.md">数据合规</a> · <a href="docs/MULTI_TENANT.md">多租户设计</a> · <a href="docs/DEPLOY_IAC.md">部署 IaC</a>
 </footer>
 

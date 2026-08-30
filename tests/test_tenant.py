@@ -43,6 +43,40 @@ def _default_tid() -> int:
         return s.query(Tenant).filter(Tenant.code == DEFAULT_TENANT_CODE).first().id
 
 
+def test_tenants_id_sequence_in_sync():
+    """护栏：tenants 主键序列必须与 MAX(id) 对齐，否则「新建院区」必失败。
+
+    为什么需要这条测试
+    ------------------
+    迁移 ``0b8ce330fa1c`` 为给存量数据兜底，用**裸 SQL 显式指定 id** 插入默认租户::
+
+        INSERT INTO tenants (id, code, name, is_default) VALUES (1, 'DEFAULT', ...)
+
+    Postgres 的 SERIAL 底层是序列（``tenants_id_seq``），**显式给 id 赋值不会推进序列**。
+    于是一个**全新库**上：默认租户占了 ``id=1``、序列却还停在 1，
+    ORM 首次插入租户会拿到 ``id=1`` → ``UniqueViolation``。再插一次才成功，
+    看起来像"偶发"，实则是**必现**，且只在「新环境建库 / 灾备恢复」时爆炸。
+
+    为什么 CI 的 ``alembic check`` 查不出来：它只比对 schema，
+    **序列当前值属于数据状态**，不在比对范围。同理 SQLite 也不复现。
+
+    修复见迁移 ``8d9e0f1a2b3c``；本测试防止回归。
+    """
+    with get_session() as s:
+        if s.get_bind().dialect.name != "postgresql":
+            pytest.skip("仅 Postgres 使用 SERIAL 序列，SQLite 不适用")
+        max_id = s.execute(text("SELECT COALESCE(MAX(id), 0) FROM tenants")).scalar()
+        last_value, is_called = s.execute(
+            text("SELECT last_value, is_called FROM tenants_id_seq")
+        ).first()
+        # is_called=false → 下一次 nextval 返回 last_value；true → 返回 last_value + 1
+        next_id = last_value if not is_called else last_value + 1
+        assert next_id > max_id, (
+            f"tenants 序列不同步：下一次 nextval={next_id}，但 MAX(id)={max_id}。"
+            "新建院区会触发主键冲突（全新库必现）。请用 setval 对齐序列。"
+        )
+
+
 @pytest.fixture
 def second_tenant():
     """创建一个隔离的第二个院区及其科室，测试结束后清理，避免污染共享 sqlite。"""
